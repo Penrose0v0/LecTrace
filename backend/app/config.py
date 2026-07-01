@@ -15,7 +15,18 @@ load_dotenv(ROOT_DIR / ".env")
 
 
 class Settings:
-    # ---- Gemini（Catchup 摘要） ----
+    # ---- LLM 提供方（Catchup 摘要 + AI 对话）----
+    # openai（默认）或 gemini，可插拔切换
+    llm_provider: str = os.getenv("LLM_PROVIDER", "openai")
+
+    # OpenAI（默认）
+    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    openai_model: str = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
+    openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    # OpenAI 实时转录模型（source=openai-stt 时用）
+    openai_stt_model: str = os.getenv("OPENAI_STT_MODEL", "gpt-4o-mini-transcribe")
+
+    # Gemini（备选）
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     # 讲义语言（转录内容的语言，默认日语）
@@ -43,6 +54,16 @@ class Settings:
     @property
     def gemini_configured(self) -> bool:
         return bool(self.gemini_api_key)
+
+    @property
+    def llm_configured(self) -> bool:
+        if self.llm_provider == "openai":
+            return bool(self.openai_api_key)
+        return bool(self.gemini_api_key)
+
+    @property
+    def llm_model(self) -> str:
+        return self.openai_model if self.llm_provider == "openai" else self.gemini_model
 
 
 @lru_cache

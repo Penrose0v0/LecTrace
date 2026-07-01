@@ -11,11 +11,13 @@
     <div class="brand">LecTrace<span class="tag">demo</span></div>
     <div class="controls">
       <select id="modeSelect" data-i18n-title="modeTitle">
-        <option value="google-stt" data-i18n="modeMic" selected>麦克风实时</option>
+        <option value="openai-stt" data-i18n="modeMicOpenai" selected>麦克风·OpenAI</option>
+        <option value="google-stt" data-i18n="modeMic">麦克风·Google</option>
         <option value="replay" data-i18n="modeReplay">回放 demo</option>
       </select>
       <select id="sessionSelect" data-i18n-title="sessionTitle"></select>
       <button id="startBtn" class="btn" data-i18n="start">开始转录</button>
+      <button id="endBtn" class="btn btn-sm hidden" data-i18n="end">结束</button>
       <span id="status" class="status"></span>
     </div>
   </header>

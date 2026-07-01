@@ -35,3 +35,6 @@ class MemoryStore:
 
     async def card_count(self, session_id: str) -> int:
         return len(self._cards.get(session_id, []))
+
+    async def all_segments(self, session_id: str) -> list[Segment]:
+        return list(self._segments.get(session_id, []))

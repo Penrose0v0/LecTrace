@@ -83,6 +83,8 @@ select { max-width: 300px; }
 .status { font-size: 13px; color: var(--muted); }
 .status.live { color: var(--accent-2); }
 
+.hidden { display: none !important; }
+
 .pane-head {
   font-size: 13px; font-weight: 600; color: var(--muted);
   text-transform: uppercase; letter-spacing: .6px; margin-bottom: 10px;

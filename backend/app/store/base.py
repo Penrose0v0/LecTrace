@@ -16,6 +16,10 @@ class TranscriptStore(Protocol):
 
     async def append(self, session_id: str, segment: Segment) -> None: ...
 
+    async def all_segments(self, session_id: str) -> list[Segment]:
+        """会话全部段落（resume 续接时取末尾 seq/t）。"""
+        ...
+
     async def latest_t(self, session_id: str) -> float:
         """已见过的最大逻辑时间 t（讲义“当前时刻”）。空会话返回 0。"""
         ...

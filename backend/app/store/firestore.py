@@ -85,3 +85,11 @@ class FirestoreStore:
         async for _ in self._session(session_id).collection("cards").stream():
             count += 1
         return count
+
+    async def all_segments(self, session_id: str) -> list[Segment]:
+        segs = self._session(session_id).collection("segments").order_by("t")
+        out: list[Segment] = []
+        async for doc in segs.stream():
+            d = doc.to_dict()
+            out.append(Segment(seq=d["seq"], text=d["text"], t=d["t"]))
+        return out

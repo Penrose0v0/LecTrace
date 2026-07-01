@@ -1,11 +1,11 @@
-"""Catchup 摘要：把最近 X 分钟的转录交给 Gemini 流式总结。"""
+"""Catchup 摘要：把最近 X 分钟的转录交给 LLM 流式总结（provider 无关）。"""
 
 from __future__ import annotations
 
 from typing import AsyncIterator
 
 from .config import Settings
-from .gemini import base_generation_config, stream_generate
+from .llm import stream_chat
 from .models import Segment
 
 _LANG_NAME = {"ja": "日本語", "en": "English", "zh": "中文"}
@@ -50,9 +50,16 @@ async def summarize_stream(
 ) -> AsyncIterator[str]:
     """逐块产出摘要文本（token 片段）。"""
     prompt = _build_prompt(segments, window_minutes, lecture_lang, user_lang)
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": base_generation_config(max_tokens=1024, temperature=0.3),
-    }
-    async for chunk in stream_generate(payload, settings):
+    user_name = _lang(user_lang)
+    # 显式的 system 指令强制输出语言（gpt-4o-mini 对嵌在正文里的语言要求不够听话）
+    system = (
+        "You help students catch up on lectures. "
+        f"Always write your entire answer in {user_name}, "
+        "regardless of the transcript's language."
+    )
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": prompt},
+    ]
+    async for chunk in stream_chat(messages, settings, max_tokens=1024, temperature=0.3):
         yield chunk

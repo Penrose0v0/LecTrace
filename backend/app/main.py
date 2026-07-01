@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from .chat import chat_stream
 from .config import get_settings
 from .conversations import get_conversation_store
-from .gemini import GeminiError
+from .llm import LLMError
 from .models import Card, CatchupRequest, ChatRequest, Segment
 from .store import get_store
 from .summarize import summarize_stream
@@ -44,8 +44,9 @@ def health() -> dict:
         "status": "ok",
         "transcription_source": settings.transcription_source,
         "store_backend": settings.store_backend,
-        "gemini_configured": settings.gemini_configured,
-        "gemini_model": settings.gemini_model,
+        "llm_provider": settings.llm_provider,
+        "llm_model": settings.llm_model,
+        "llm_configured": settings.llm_configured,
     }
 
 
@@ -60,8 +61,8 @@ async def ws_transcribe(ws: WebSocket) -> None:
     """转录 WebSocket。source=replay（回放，服务端推）或 google-stt（前端上行音频）。"""
     await ws.accept()
     source = ws.query_params.get("source") or settings.transcription_source
-    if source == "google-stt":
-        await _run_stt(ws)
+    if source in ("google-stt", "openai-stt"):
+        await _run_stt(ws, source)
     else:
         await _run_replay(ws)
 
@@ -86,7 +87,7 @@ async def _run_replay(ws: WebSocket) -> None:
         return
 
     session_id = uuid.uuid4().hex
-    await store.create_session(session_id, meta={"file": file})
+    await store.create_session(session_id, meta={"source": "replay", "file": file})
     replay = ReplaySource(path, speed=speed, max_gap_sec=settings.replay_max_gap_sec)
 
     await ws.send_json(
@@ -116,24 +117,43 @@ async def _run_replay(ws: WebSocket) -> None:
             pass
 
 
-async def _run_stt(ws: WebSocket) -> None:
-    """前端上行麦克风音频（LINEAR16 16k 二进制帧）→ 代理 Google STT → 回推转录。
+async def _run_stt(ws: WebSocket, source: str) -> None:
+    """前端上行麦克风音频（二进制 PCM 帧）→ 代理 STT（Google/OpenAI）→ 回推转录。
 
-    query: lang=ja|en|zh（讲义语言）。t 用会话开始起的服务端时钟（跨流重启一致）。
+    source: google-stt（16k）或 openai-stt（24k）。query: lang=ja|en|zh（讲义语言）。
+    t 用会话开始起的服务端时钟。
     """
-    from .transcription.google_stt import run_stt
-
     lang = ws.query_params.get("lang") or settings.lecture_language
-    session_id = uuid.uuid4().hex
-    await store.create_session(session_id, meta={"source": "google-stt", "lang": lang})
+
+    # 续接已有 session（resume）：seq 与时间轴 t 接着上次继续
+    resume_id = ws.query_params.get("session")
+    seq = 0
+    t_offset = 0.0
+    resumed = False
+    if resume_id:
+        segs = await store.all_segments(resume_id)
+        if segs:
+            seq = segs[-1].seq
+            t_offset = segs[-1].t
+            session_id = resume_id
+            resumed = True
+    if not resumed:
+        session_id = uuid.uuid4().hex
+        await store.create_session(session_id, meta={"source": source, "lang": lang})
+
     await ws.send_json(
-        {"type": "session", "session_id": session_id, "source": "google-stt", "lang": lang}
+        {
+            "type": "session",
+            "session_id": session_id,
+            "source": source,
+            "lang": lang,
+            "resumed": resumed,
+        }
     )
 
     loop = asyncio.get_event_loop()
     session_start = loop.time()
     audio_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
-    seq = 0
 
     async def on_interim(text: str) -> None:
         await ws.send_json({"type": "interim", "text": text})
@@ -141,7 +161,7 @@ async def _run_stt(ws: WebSocket) -> None:
     async def on_final(text: str) -> None:
         nonlocal seq
         seq += 1
-        t = loop.time() - session_start
+        t = t_offset + (loop.time() - session_start)
         seg = Segment(seq=seq, text=text, t=t)
         await store.append(session_id, seg)
         await ws.send_json({"type": "segment", "seq": seq, "text": text, "t": t})
@@ -161,8 +181,20 @@ async def _run_stt(ws: WebSocket) -> None:
         finally:
             await audio_queue.put(None)  # 通知 STT 结束
 
+    if source == "openai-stt":
+        from .transcription.openai_stt import run_stt
+
+        runner = run_stt(
+            audio_queue, lang, on_interim, on_final,
+            api_key=settings.openai_api_key, model=settings.openai_stt_model,
+        )
+    else:
+        from .transcription.google_stt import run_stt
+
+        runner = run_stt(audio_queue, lang, on_interim, on_final)
+
     recv_task = asyncio.create_task(receive_loop())
-    stt_task = asyncio.create_task(run_stt(audio_queue, lang, on_interim, on_final))
+    stt_task = asyncio.create_task(runner)
 
     done, _ = await asyncio.wait(
         {recv_task, stt_task}, return_when=asyncio.FIRST_COMPLETED
@@ -217,8 +249,8 @@ async def catchup(req: CatchupRequest) -> StreamingResponse:
     segs: list[Segment] = await store.window(req.session_id, start_t, now_t)
     if not segs:
         raise HTTPException(status_code=404, detail="该时间窗内没有转录内容。")
-    if not settings.gemini_configured:
-        raise HTTPException(status_code=502, detail="GEMINI_API_KEY 未配置，无法生成摘要。")
+    if not settings.llm_configured:
+        raise HTTPException(status_code=502, detail="LLM 未配置 API key，无法生成摘要。")
 
     index = await store.card_count(req.session_id) + 1
     card = Card(
@@ -227,7 +259,7 @@ async def catchup(req: CatchupRequest) -> StreamingResponse:
         covered_from=start_t,
         covered_to=now_t,
         segment_count=len(segs),
-        model=settings.gemini_model,
+        model=settings.llm_model,
         lecture_language=req.lecture_language,
         user_language=req.user_language,
         created_t=now_t,
@@ -243,7 +275,7 @@ async def catchup(req: CatchupRequest) -> StreamingResponse:
                 "covered_from": start_t,
                 "covered_to": now_t,
                 "segment_count": len(segs),
-                "model": settings.gemini_model,
+                "model": settings.llm_model,
                 "lecture_language": req.lecture_language,
                 "user_language": req.user_language,
             },
@@ -262,7 +294,7 @@ async def catchup(req: CatchupRequest) -> StreamingResponse:
             card.summary = acc
             await store.add_card(req.session_id, card)  # 摘要完成后持久化卡片
             yield _sse("done", {})
-        except GeminiError as exc:
+        except LLMError as exc:
             yield _sse("error", {"message": str(exc)})
 
     return StreamingResponse(
@@ -310,8 +342,8 @@ async def chat(req: ChatRequest) -> StreamingResponse:
     """流式返回 AI 对话回复（SSE）。结合最近转录作为上下文，服务端保存多轮历史。"""
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="消息为空。")
-    if not settings.gemini_configured:
-        raise HTTPException(status_code=502, detail="GEMINI_API_KEY 未配置，无法对话。")
+    if not settings.llm_configured:
+        raise HTTPException(status_code=502, detail="LLM 未配置 API key，无法对话。")
 
     if req.conversation_id:
         conv = await conversations.get(req.conversation_id)
@@ -337,7 +369,7 @@ async def chat(req: ChatRequest) -> StreamingResponse:
             conv.messages.append({"role": "assistant", "content": acc})
             await conversations.save(conv)  # 成功后整体持久化（含新一轮问答）
             yield _sse("done", {})
-        except GeminiError as exc:
+        except LLMError as exc:
             # 失败不持久化；回滚内存对象里刚加入的用户消息，保持一致
             if conv.messages and conv.messages[-1]["role"] == "user":
                 conv.messages.pop()
