@@ -37,8 +37,14 @@ async def run_stt(
     *,
     api_key: str,
     model: str,
+    silence_ms: int = 800,
 ) -> None:
-    """从 audio_queue 取音频喂给 OpenAI Realtime，回调 interim / final。队列 None 结束。"""
+    """从 audio_queue 取音频喂给 OpenAI Realtime，回调 interim / final。队列 None 结束。
+
+    silence_ms：VAD 判定"说完一句"所需的静音时长。默认 VAD 阈值太短(~200ms)，
+    讲师短停顿就切段 → 碎片太短 → 模型幻觉。调大到 ~800ms 合并短停顿，
+    给模型足够上下文，转录更连贯。
+    """
     headers = {"Authorization": f"Bearer {api_key}"}
     session_update = {
         "type": "session.update",
@@ -48,6 +54,12 @@ async def run_stt(
                 "input": {
                     "format": {"type": "audio/pcm", "rate": SAMPLE_RATE},
                     "transcription": {"model": model, "language": lang_code(lecture_lang)},
+                    "turn_detection": {
+                        "type": "server_vad",
+                        "silence_duration_ms": silence_ms,
+                        "threshold": 0.5,
+                        "prefix_padding_ms": 300,
+                    },
                 }
             },
         },
@@ -100,9 +112,9 @@ async def run_stt(
         send_task = asyncio.create_task(sender())
         read_task = asyncio.create_task(reader())
         await stopped.wait()
-        # 停止后再给一小段时间收尾尾部 final
+        # 停止后 commit 冲刷的尾段 final 可能要几秒才回来，给足时间
         try:
-            await asyncio.wait_for(asyncio.shield(read_task), timeout=2.0)
+            await asyncio.wait_for(asyncio.shield(read_task), timeout=6.0)
         except asyncio.TimeoutError:
             pass
         for tk in (read_task, send_task):

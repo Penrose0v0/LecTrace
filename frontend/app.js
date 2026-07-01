@@ -416,8 +416,15 @@ async function startMic() {
   const targetRate = mode === "openai-stt" ? 24000 : 16000;
   setStatus("statusRequestMic");
   try {
+    // 关掉人声通话处理：这些算法为双向通话调，用在课程/系统音频(如 BlackHole)上
+    // 会削波/门限/失真，损害 ASR。转录要的是忠实的原始音频。
     micStream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      audio: {
+        channelCount: 1,
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      },
     });
   } catch (e) {
     setStatus("statusMicDenied");

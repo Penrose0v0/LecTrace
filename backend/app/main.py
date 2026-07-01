@@ -187,6 +187,7 @@ async def _run_stt(ws: WebSocket, source: str) -> None:
         runner = run_stt(
             audio_queue, lang, on_interim, on_final,
             api_key=settings.openai_api_key, model=settings.openai_stt_model,
+            silence_ms=settings.openai_stt_silence_ms,
         )
     else:
         from .transcription.google_stt import run_stt
