@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Data
+data/
+*.sqlite
+*.sqlite3
+*.db
+
+# Models (large, keep out of git)
+models/*.bin
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Local config / secrets
+.env
+config.local.py

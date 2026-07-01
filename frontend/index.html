@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LecTrace</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">LecTrace<span class="tag">demo</span></div>
+    <div class="controls">
+      <select id="sessionSelect" data-i18n-title="sessionTitle"></select>
+      <button id="startBtn" class="btn" data-i18n="start">开始转录</button>
+      <span id="status" class="status"></span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- 左：转录区 -->
+    <section class="col transcript-col">
+      <div class="pane-head" data-i18n="transcriptHead">实时转录</div>
+      <div id="transcript" class="transcript"></div>
+    </section>
+
+    <!-- 中：Catchup 区 -->
+    <section class="col catchup-col">
+      <!-- 上：设置回顾时间 -->
+      <div class="catchup-settings">
+        <div class="pane-head" data-i18n="catchupSettingsTitle">设置回顾时间</div>
+        <div class="lang-row">
+          <label class="lang-field">
+            <span data-i18n="lectureLangLabel">讲义语言</span>
+            <select id="lectureLang">
+              <option value="ja" selected>日本語</option>
+              <option value="zh">中文</option>
+              <option value="en">English</option>
+            </select>
+          </label>
+          <label class="lang-field">
+            <span data-i18n="userLangLabel">用户语言</span>
+            <select id="userLang">
+              <option value="ja" selected>日本語</option>
+              <option value="zh">中文</option>
+              <option value="en">English</option>
+            </select>
+          </label>
+        </div>
+        <label class="window-label">
+          <span data-i18n="windowPre">回顾最近</span>
+          <b id="windowVal">5</b>
+          <span data-i18n="windowSuf">分钟</span>
+          <input id="windowSlider" type="range" min="1" max="15" value="5" step="1" />
+        </label>
+        <button id="catchupBtn" class="btn btn-primary" data-i18n="catchupBtn" disabled>没跟上？点我总结</button>
+      </div>
+
+      <!-- 下：摘要卡片 -->
+      <div class="catchup-cards">
+        <div class="cards-nav">
+          <button id="cardsPrev" class="icon-btn" title="prev">‹</button>
+          <div id="cardChips" class="card-chips"></div>
+          <button id="cardsNext" class="icon-btn" title="next">›</button>
+        </div>
+        <div id="cardBody" class="card-body"></div>
+      </div>
+    </section>
+
+    <!-- 右：AI 对话区 -->
+    <section class="col chat-col">
+      <div class="chat-head">
+        <span class="pane-head" data-i18n="aiTitle">AI 对话</span>
+        <div class="chat-actions">
+          <button id="newChatBtn" class="btn btn-sm" data-i18n="newChat">新对话</button>
+          <button id="historyBtn" class="btn btn-sm" data-i18n="history">历史对话</button>
+        </div>
+      </div>
+      <div id="chatMessages" class="chat-messages"></div>
+      <div id="historyPanel" class="history-panel hidden"></div>
+      <div class="chat-input">
+        <textarea id="chatInput" rows="2" data-i18n-ph="chatPlaceholder"></textarea>
+        <button id="sendBtn" class="btn btn-primary" data-i18n="send">发送</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
