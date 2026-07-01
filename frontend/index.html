@@ -10,6 +10,10 @@
   <header class="topbar">
     <div class="brand">LecTrace<span class="tag">demo</span></div>
     <div class="controls">
+      <select id="modeSelect" data-i18n-title="modeTitle">
+        <option value="google-stt" data-i18n="modeMic" selected>麦克风实时</option>
+        <option value="replay" data-i18n="modeReplay">回放 demo</option>
+      </select>
       <select id="sessionSelect" data-i18n-title="sessionTitle"></select>
       <button id="startBtn" class="btn" data-i18n="start">开始转录</button>
       <span id="status" class="status"></span>

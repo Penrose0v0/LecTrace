@@ -1,0 +1,21 @@
+# Cloud Build 上传上下文时忽略这些（构建只需 backend/ frontend/ _archive/data）
+.git/
+.venv/
+venv/
+models/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 密钥与本地配置（绝不进镜像）
+.env
+config.local.py
+
+# 杂项
+.DS_Store
+.vscode/
+.idea/
+docs/
+scratchpad/
+
+# 注意：不要忽略 _archive/data —— Dockerfile 需要它作为回放数据

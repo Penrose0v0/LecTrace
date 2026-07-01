@@ -5,6 +5,8 @@ websockets>=13
 httpx>=0.27
 python-dotenv>=1.0
 
-# 目标架构（尚未接入，接 STT / Firestore 时取消注释）
-# google-cloud-speech>=2.27
-# google-cloud-firestore>=2.19
+# 持久化（STORE_BACKEND=firestore 时需要）
+google-cloud-firestore>=2.19
+
+# 实时转录（source=google-stt 时需要）
+google-cloud-speech>=2.27

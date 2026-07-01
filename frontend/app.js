@@ -21,12 +21,17 @@ const sendBtn = $("sendBtn");
 const newChatBtn = $("newChatBtn");
 const historyBtn = $("historyBtn");
 const historyPanel = $("historyPanel");
+const modeSelect = $("modeSelect");
+const startBtn2 = $("startBtn");
 
 // ---------------- i18n ----------------
 const I18N = {
   ja: {
     docTitle: "LecTrace — 聞き逃しCatchup",
-    sessionTitle: "再生する講義を選択", start: "文字起こし開始",
+    sessionTitle: "再生する講義を選択", start: "文字起こし開始", stop: "停止",
+    modeTitle: "文字起こしソース", modeReplay: "アーカイブ再生", modeMic: "マイク（リアルタイム）",
+    statusListening: "収音中…", statusRequestMic: "マイクを要求中…",
+    statusMicDenied: "マイクが使えません", statusSttError: (m) => `STT エラー：${m}`,
     transcriptHead: "リアルタイム文字起こし",
     catchupSettingsTitle: "振り返り時間の設定",
     lectureLangLabel: "講義の言語", userLangLabel: "あなたの言語",
@@ -48,7 +53,10 @@ const I18N = {
   },
   zh: {
     docTitle: "LecTrace — 听讲 Catchup",
-    sessionTitle: "选择要回放的归档课堂", start: "开始转录",
+    sessionTitle: "选择要回放的归档课堂", start: "开始转录", stop: "停止",
+    modeTitle: "转录来源", modeReplay: "回放 demo", modeMic: "麦克风实时",
+    statusListening: "收音中…", statusRequestMic: "正在请求麦克风…",
+    statusMicDenied: "无法使用麦克风", statusSttError: (m) => `STT 错误：${m}`,
     transcriptHead: "实时转录",
     catchupSettingsTitle: "设置回顾时间",
     lectureLangLabel: "讲义语言", userLangLabel: "用户语言",
@@ -70,7 +78,10 @@ const I18N = {
   },
   en: {
     docTitle: "LecTrace — Lecture Catchup",
-    sessionTitle: "Choose an archived lecture to replay", start: "Start",
+    sessionTitle: "Choose an archived lecture to replay", start: "Start", stop: "Stop",
+    modeTitle: "Transcript source", modeReplay: "Replay demo", modeMic: "Microphone (live)",
+    statusListening: "Listening…", statusRequestMic: "Requesting mic…",
+    statusMicDenied: "Microphone unavailable", statusSttError: (m) => `STT error: ${m}`,
     transcriptHead: "Live transcript",
     catchupSettingsTitle: "Recap window",
     lectureLangLabel: "Lecture language", userLangLabel: "Your language",
@@ -108,6 +119,7 @@ function applyI18n(lang) {
   renderStatus();
   renderSessions();
   renderCards();
+  updateStartBtn();
   if (!chatMessages.children.length || chatMessages.dataset.empty === "1") renderChatEmpty();
 }
 
@@ -180,6 +192,9 @@ async function parseSSE(body, handlers) {
 // ---------------- 转录 ----------------
 let ws = null;
 let sessionId = null;
+let mode = "replay";
+let transcribing = false;
+let micStream = null, audioCtx = null, processor = null;
 
 async function loadSessions() {
   try {
@@ -190,9 +205,21 @@ async function loadSessions() {
   } catch (e) { setStatus("loadSessionsFailed"); }
 }
 
+function updateStartBtn() {
+  startBtn2.textContent = transcribing ? t("stop") : t("start");
+  startBtn2.classList.toggle("btn-primary", transcribing);
+  modeSelect.disabled = transcribing;
+  sessionSelect.disabled = transcribing;
+}
+
+function applyMode() {
+  mode = modeSelect.value;
+  sessionSelect.style.display = mode === "replay" ? "" : "none";
+}
+
 function appendSegment(seq, text, tSec) {
-  // 追加前先判断用户是否已在底部附近；只有在底部时才自动下拉，
-  // 用户往上翻看历史时不打断。
+  removeInterim();
+  // 只有当用户已在底部附近时才自动下拉，往上翻看历史时不打断。
   const atBottom =
     transcriptEl.scrollHeight - transcriptEl.scrollTop - transcriptEl.clientHeight < 80;
   const div = document.createElement("div");
@@ -203,33 +230,154 @@ function appendSegment(seq, text, tSec) {
   if (atBottom) transcriptEl.scrollTop = transcriptEl.scrollHeight;
 }
 
+// STT 临时结果：一个滚动更新的“待定”行
+function showInterim(text) {
+  const atBottom =
+    transcriptEl.scrollHeight - transcriptEl.scrollTop - transcriptEl.clientHeight < 80;
+  let p = document.getElementById("pendingSeg");
+  if (!p) {
+    p = document.createElement("div");
+    p.className = "seg pending";
+    p.id = "pendingSeg";
+    transcriptEl.appendChild(p);
+  }
+  p.innerHTML = `<span class="dot">●</span>${escapeHtml(text)}`;
+  if (atBottom) transcriptEl.scrollTop = transcriptEl.scrollHeight;
+}
+function removeInterim() {
+  const p = document.getElementById("pendingSeg");
+  if (p) p.remove();
+}
+
+// 转录消息统一处理（回放 + 麦克风共用）
+function onTranscriptMessage(ev) {
+  if (typeof ev.data !== "string") return;
+  const msg = JSON.parse(ev.data);
+  if (msg.type === "session") {
+    sessionId = msg.session_id;
+    catchupBtn.disabled = false;
+    if (msg.source === "google-stt") setStatus("statusListening", { live: true });
+    else setStatus("statusLive", { param: msg.speed, live: true });
+  } else if (msg.type === "interim") {
+    showInterim(msg.text);
+  } else if (msg.type === "segment") {
+    appendSegment(msg.seq, msg.text, msg.t);
+  } else if (msg.type === "end") {
+    finishTranscription("statusEnded");
+  } else if (msg.type === "error") {
+    setStatus("statusSttError", { param: msg.message });
+    finishTranscription(null);
+  }
+}
+
 function startTranscription() {
-  if (ws) ws.close();
+  transcribing = true;
+  updateStartBtn();
+  if (ws) { try { ws.close(); } catch (e) {} ws = null; }
   transcriptEl.innerHTML = "";
+  removeInterim();
   sessionId = null;
   catchupBtn.disabled = true;
+  cards = []; activeCardId = null; renderCards(); clearHighlight();
+  if (mode === "google-stt") startMic();
+  else startReplay();
+}
 
+function finishTranscription(statusKey) {
+  transcribing = false;
+  updateStartBtn();
+  removeInterim();
+  stopAudio();
+  if (statusKey && statusState.key !== "statusMicDenied") setStatus(statusKey);
+}
+
+function stopTranscription() {
+  if (mode === "google-stt") {
+    // 发 stop 并停止采集，但保持连接，等服务端把尾部 final + end 发完再收尾
+    if (ws) { try { if (ws.readyState === 1) ws.send("stop"); } catch (e) {} }
+    stopAudio();
+  } else {
+    // 回放：直接关连接即可停止
+    if (ws) { try { ws.close(); } catch (e) {} }
+    finishTranscription("statusEnded");
+  }
+}
+
+function stopAudio() {
+  if (processor) { try { processor.disconnect(); processor.onaudioprocess = null; } catch (e) {} processor = null; }
+  if (audioCtx) { try { audioCtx.close(); } catch (e) {} audioCtx = null; }
+  if (micStream) { micStream.getTracks().forEach((tr) => tr.stop()); micStream = null; }
+}
+
+// ---- 回放 ----
+function startReplay() {
   const file = sessionSelect.value;
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${location.host}/ws/transcribe?file=${encodeURIComponent(file)}`);
-  setStatus("statusConnecting");
-
-  ws.onmessage = (ev) => {
-    const msg = JSON.parse(ev.data);
-    if (msg.type === "session") {
-      sessionId = msg.session_id;
-      catchupBtn.disabled = false;
-      setStatus("statusLive", { param: msg.speed, live: true });
-    } else if (msg.type === "segment") {
-      appendSegment(msg.seq, msg.text, msg.t);
-    } else if (msg.type === "end") {
-      setStatus("statusEnded");
-    } else if (msg.type === "error") {
-      setStatus("statusConnError");
-    }
-  };
-  ws.onclose = () => { if (statusState.key === "statusLive") setStatus("statusDisconnected"); };
+  ws = new WebSocket(`${proto}://${location.host}/ws/transcribe?source=replay&file=${encodeURIComponent(file)}`);
+  ws.onmessage = onTranscriptMessage;
+  ws.onclose = () => { if (transcribing && statusState.key === "statusLive") finishTranscription("statusDisconnected"); };
   ws.onerror = () => setStatus("statusConnError");
+  setStatus("statusConnecting");
+}
+
+// ---- 麦克风实时（Google STT）----
+function floatTo16BitPCM(f32) {
+  const out = new Int16Array(f32.length);
+  for (let i = 0; i < f32.length; i++) {
+    const s = Math.max(-1, Math.min(1, f32[i]));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return out;
+}
+function downsample(buf, inRate, outRate) {
+  if (outRate >= inRate) return buf;
+  const ratio = inRate / outRate;
+  const outLen = Math.round(buf.length / ratio);
+  const res = new Float32Array(outLen);
+  let oi = 0, bi = 0;
+  while (oi < outLen) {
+    const next = Math.round((oi + 1) * ratio);
+    let acc = 0, cnt = 0;
+    for (let i = bi; i < next && i < buf.length; i++) { acc += buf[i]; cnt++; }
+    res[oi++] = cnt ? acc / cnt : 0;
+    bi = next;
+  }
+  return res;
+}
+
+async function startMic() {
+  setStatus("statusRequestMic");
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+    });
+  } catch (e) {
+    setStatus("statusMicDenied");
+    finishTranscription(null);
+    return;
+  }
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${proto}://${location.host}/ws/transcribe?source=google-stt&lang=${lectureLang.value}`);
+  ws.binaryType = "arraybuffer";
+  ws.onmessage = onTranscriptMessage;
+  ws.onclose = () => { if (transcribing) finishTranscription("statusEnded"); };
+  ws.onerror = () => setStatus("statusConnError");
+  ws.onopen = () => {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = audioCtx.createMediaStreamSource(micStream);
+    processor = audioCtx.createScriptProcessor(4096, 1, 1);
+    const sink = audioCtx.createGain();
+    sink.gain.value = 0; // 静音接到 destination，保证 onaudioprocess 触发又不回放
+    src.connect(processor);
+    processor.connect(sink);
+    sink.connect(audioCtx.destination);
+    processor.onaudioprocess = (e) => {
+      if (!ws || ws.readyState !== 1) return;
+      const input = e.inputBuffer.getChannelData(0);
+      const pcm = floatTo16BitPCM(downsample(input, audioCtx.sampleRate, 16000));
+      ws.send(pcm.buffer);
+    };
+  };
 }
 
 // ---------------- 转录高亮 ----------------
@@ -434,7 +582,8 @@ async function loadConversation(id) {
 
 // ---------------- 事件绑定 ----------------
 windowSlider.addEventListener("input", () => { windowVal.textContent = windowSlider.value; });
-startBtn.addEventListener("click", startTranscription);
+startBtn2.addEventListener("click", () => (transcribing ? stopTranscription() : startTranscription()));
+modeSelect.addEventListener("change", applyMode);
 catchupBtn.addEventListener("click", doCatchup);
 cardsPrev.addEventListener("click", () => stepCard(-1));
 cardsNext.addEventListener("click", () => stepCard(1));
@@ -451,3 +600,10 @@ setStatus("statusIdle");
 renderChatEmpty();
 applyI18n(uiLang);
 loadSessions();
+// 默认转录源完全跟随后端配置（双向）
+fetch("/api/health").then((r) => r.json()).then((h) => {
+  if (h.transcription_source === "google-stt" || h.transcription_source === "replay") {
+    modeSelect.value = h.transcription_source;
+  }
+  applyMode();
+}).catch(() => applyMode());

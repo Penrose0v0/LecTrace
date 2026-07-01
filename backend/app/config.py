@@ -34,8 +34,11 @@ class Settings:
     replay_max_gap_sec: float = float(os.getenv("REPLAY_MAX_GAP_SEC", "2.0"))
 
     # ---- 存储 ----
-    # demo 阶段：memory。之后可换 firestore。
+    # demo 阶段：memory。持久化用 firestore。
     store_backend: str = os.getenv("STORE_BACKEND", "memory")
+    # Firestore 项目 / 数据库（store_backend=firestore 时用）
+    gcp_project: str = os.getenv("GCP_PROJECT", "") or os.getenv("GOOGLE_CLOUD_PROJECT", "")
+    firestore_database: str = os.getenv("FIRESTORE_DATABASE", "(default)")
 
     @property
     def gemini_configured(self) -> bool:

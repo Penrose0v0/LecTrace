@@ -1,53 +1,16 @@
 """AI 对话：结合课堂转录上下文，与用户多轮对话（Gemini 流式）。
 
-会话保存在内存（demo）。之后可换成 Firestore，把 ConversationStore 换实现即可。
+会话存储见 conversations.py（内存 / Firestore 可插拔）。
 """
 
 from __future__ import annotations
 
-import uuid
 from typing import AsyncIterator
 
 from .config import Settings
 from .gemini import base_generation_config, stream_generate
 
 _LANG_NAME = {"ja": "日本語", "en": "English", "zh": "中文"}
-
-
-class Conversation:
-    def __init__(self, cid: str, session_id: str, title: str, created_t: float) -> None:
-        self.id = cid
-        self.session_id = session_id
-        self.title = title
-        self.created_t = created_t
-        self.messages: list[dict] = []  # [{"role": "user"|"assistant", "content": str}]
-
-    def summary(self) -> dict:
-        return {
-            "id": self.id,
-            "title": self.title,
-            "created_t": self.created_t,
-            "message_count": len(self.messages),
-        }
-
-
-class ConversationStore:
-    """内存版会话存储（demo）。"""
-
-    def __init__(self) -> None:
-        self._c: dict[str, Conversation] = {}
-
-    def create(self, session_id: str, title: str, created_t: float) -> Conversation:
-        cid = uuid.uuid4().hex
-        conv = Conversation(cid, session_id, title, created_t)
-        self._c[cid] = conv
-        return conv
-
-    def get(self, cid: str) -> Conversation | None:
-        return self._c.get(cid)
-
-    def list(self, session_id: str) -> list[Conversation]:
-        return [c for c in self._c.values() if c.session_id == session_id]
 
 
 def _system_instruction(transcript: str, user_lang: str) -> dict:

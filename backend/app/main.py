@@ -7,6 +7,7 @@ demo 数据流：前端 —WS—> 后端(回放归档 session) —> 前端展示
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from pathlib import Path
@@ -15,17 +16,18 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .chat import ConversationStore, chat_stream
+from .chat import chat_stream
 from .config import get_settings
+from .conversations import get_conversation_store
 from .gemini import GeminiError
-from .models import CatchupRequest, ChatRequest, Segment
+from .models import Card, CatchupRequest, ChatRequest, Segment
 from .store import get_store
 from .summarize import summarize_stream
 from .transcription import ReplaySource, list_demo_sessions
 
 settings = get_settings()
 store = get_store()
-conversations = ConversationStore()
+conversations = get_conversation_store()
 
 # 对话上下文用的转录窗口（秒）
 CHAT_CONTEXT_WINDOW_SEC = 1200.0
@@ -55,12 +57,17 @@ def sessions() -> dict:
 
 @app.websocket("/ws/transcribe")
 async def ws_transcribe(ws: WebSocket) -> None:
-    """建立会话并推送转录段落。
-
-    query: file=<归档文件名>（可选，缺省用最新一个）、speed=<倍率>（可选）。
-    """
+    """转录 WebSocket。source=replay（回放，服务端推）或 google-stt（前端上行音频）。"""
     await ws.accept()
+    source = ws.query_params.get("source") or settings.transcription_source
+    if source == "google-stt":
+        await _run_stt(ws)
+    else:
+        await _run_replay(ws)
 
+
+async def _run_replay(ws: WebSocket) -> None:
+    """回放归档 session：服务端按节奏推送转录（query: file, speed）。"""
     file = ws.query_params.get("file")
     speed = float(ws.query_params.get("speed") or settings.replay_speed)
 
@@ -79,22 +86,23 @@ async def ws_transcribe(ws: WebSocket) -> None:
         return
 
     session_id = uuid.uuid4().hex
-    store.create_session(session_id, meta={"file": file})
-    source = ReplaySource(path, speed=speed, max_gap_sec=settings.replay_max_gap_sec)
+    await store.create_session(session_id, meta={"file": file})
+    replay = ReplaySource(path, speed=speed, max_gap_sec=settings.replay_max_gap_sec)
 
     await ws.send_json(
         {
             "type": "session",
             "session_id": session_id,
+            "source": "replay",
             "file": file,
-            "total_segments": len(source.segments),
+            "total_segments": len(replay.segments),
             "speed": speed,
         }
     )
 
     try:
-        async for seg in source.stream():
-            store.append(session_id, seg)
+        async for seg in replay.stream():
+            await store.append(session_id, seg)
             await ws.send_json(
                 {"type": "segment", "seq": seg.seq, "text": seg.text, "t": seg.t}
             )
@@ -106,6 +114,87 @@ async def ws_transcribe(ws: WebSocket) -> None:
             await ws.send_json({"type": "error", "message": str(exc)})
         except Exception:
             pass
+
+
+async def _run_stt(ws: WebSocket) -> None:
+    """前端上行麦克风音频（LINEAR16 16k 二进制帧）→ 代理 Google STT → 回推转录。
+
+    query: lang=ja|en|zh（讲义语言）。t 用会话开始起的服务端时钟（跨流重启一致）。
+    """
+    from .transcription.google_stt import run_stt
+
+    lang = ws.query_params.get("lang") or settings.lecture_language
+    session_id = uuid.uuid4().hex
+    await store.create_session(session_id, meta={"source": "google-stt", "lang": lang})
+    await ws.send_json(
+        {"type": "session", "session_id": session_id, "source": "google-stt", "lang": lang}
+    )
+
+    loop = asyncio.get_event_loop()
+    session_start = loop.time()
+    audio_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+    seq = 0
+
+    async def on_interim(text: str) -> None:
+        await ws.send_json({"type": "interim", "text": text})
+
+    async def on_final(text: str) -> None:
+        nonlocal seq
+        seq += 1
+        t = loop.time() - session_start
+        seg = Segment(seq=seq, text=text, t=t)
+        await store.append(session_id, seg)
+        await ws.send_json({"type": "segment", "seq": seq, "text": text, "t": t})
+
+    async def receive_loop() -> None:
+        try:
+            while True:
+                msg = await ws.receive()
+                if msg["type"] == "websocket.disconnect":
+                    break
+                if msg.get("bytes") is not None:
+                    await audio_queue.put(msg["bytes"])
+                elif msg.get("text") == "stop":
+                    break
+        except WebSocketDisconnect:
+            pass
+        finally:
+            await audio_queue.put(None)  # 通知 STT 结束
+
+    recv_task = asyncio.create_task(receive_loop())
+    stt_task = asyncio.create_task(run_stt(audio_queue, lang, on_interim, on_final))
+
+    done, _ = await asyncio.wait(
+        {recv_task, stt_task}, return_when=asyncio.FIRST_COMPLETED
+    )
+
+    if stt_task in done:
+        # STT 先结束多半是出错（缺凭证/权限等）
+        exc = stt_task.exception()
+        if exc is not None:
+            try:
+                await ws.send_json({"type": "error", "message": str(exc)})
+            except Exception:
+                pass
+        recv_task.cancel()
+    else:
+        # 收流结束（stop/断开）：通知 STT 收尾，并等它把尾部 final 冲出来后再结束，
+        # 不要立即 cancel，否则最后一段 final 会丢。
+        await audio_queue.put(None)
+        try:
+            await asyncio.wait_for(stt_task, timeout=10)
+        except asyncio.TimeoutError:
+            stt_task.cancel()
+        except Exception as exc:  # noqa: BLE001
+            try:
+                await ws.send_json({"type": "error", "message": str(exc)})
+            except Exception:
+                pass
+
+    try:
+        await ws.send_json({"type": "end"})
+    except Exception:
+        pass
 
 
 def _sse(event: str | None, data: dict) -> str:
@@ -120,21 +209,36 @@ async def catchup(req: CatchupRequest) -> StreamingResponse:
     事件：meta（时间窗/模型信息）→ 多个默认 message（{"text": 片段}）→ done / error。
     前置校验（会话/内容/key）在开流前完成，便于用普通 HTTP 状态码反馈。
     """
-    now_t = store.latest_t(req.session_id)
+    now_t = await store.latest_t(req.session_id)
     if now_t <= 0:
         raise HTTPException(status_code=404, detail="会话不存在或还没有转录内容。")
 
     start_t = max(0.0, now_t - req.window_minutes * 60.0)
-    segs: list[Segment] = store.window(req.session_id, start_t, now_t)
+    segs: list[Segment] = await store.window(req.session_id, start_t, now_t)
     if not segs:
         raise HTTPException(status_code=404, detail="该时间窗内没有转录内容。")
     if not settings.gemini_configured:
         raise HTTPException(status_code=502, detail="GEMINI_API_KEY 未配置，无法生成摘要。")
 
+    index = await store.card_count(req.session_id) + 1
+    card = Card(
+        id=uuid.uuid4().hex,
+        index=index,
+        covered_from=start_t,
+        covered_to=now_t,
+        segment_count=len(segs),
+        model=settings.gemini_model,
+        lecture_language=req.lecture_language,
+        user_language=req.user_language,
+        created_t=now_t,
+    )
+
     async def gen():
         yield _sse(
             "meta",
             {
+                "card_id": card.id,
+                "index": card.index,
                 "window_minutes": req.window_minutes,
                 "covered_from": start_t,
                 "covered_to": now_t,
@@ -144,6 +248,7 @@ async def catchup(req: CatchupRequest) -> StreamingResponse:
                 "user_language": req.user_language,
             },
         )
+        acc = ""
         try:
             async for chunk in summarize_stream(
                 segs,
@@ -152,7 +257,10 @@ async def catchup(req: CatchupRequest) -> StreamingResponse:
                 req.user_language,
                 settings,
             ):
+                acc += chunk
                 yield _sse(None, {"text": chunk})
+            card.summary = acc
+            await store.add_card(req.session_id, card)  # 摘要完成后持久化卡片
             yield _sse("done", {})
         except GeminiError as exc:
             yield _sse("error", {"message": str(exc)})
@@ -164,27 +272,34 @@ async def catchup(req: CatchupRequest) -> StreamingResponse:
     )
 
 
-def _chat_context(session_id: str) -> str:
+@app.get("/api/sessions/{session_id}/cards")
+async def list_cards(session_id: str) -> dict:
+    """该会话已生成的 Catchup 卡片（持久化后可用于重载）。"""
+    cards = await store.list_cards(session_id)
+    return {"cards": [c.model_dump() for c in cards]}
+
+
+async def _chat_context(session_id: str) -> str:
     """取最近一段转录作为对话上下文。"""
-    now_t = store.latest_t(session_id)
+    now_t = await store.latest_t(session_id)
     if now_t <= 0:
         return ""
     start_t = max(0.0, now_t - CHAT_CONTEXT_WINDOW_SEC)
-    segs = store.window(session_id, start_t, now_t)
+    segs = await store.window(session_id, start_t, now_t)
     text = "\n".join(s.text for s in segs)
     return text[-CHAT_CONTEXT_MAX_CHARS:]
 
 
 @app.get("/api/conversations")
-def list_conversations(session_id: str) -> dict:
-    convs = conversations.list(session_id)
+async def list_conversations(session_id: str) -> dict:
+    convs = await conversations.list(session_id)
     convs.sort(key=lambda c: c.created_t, reverse=True)
     return {"conversations": [c.summary() for c in convs]}
 
 
 @app.get("/api/conversations/{conversation_id}")
-def get_conversation(conversation_id: str) -> dict:
-    conv = conversations.get(conversation_id)
+async def get_conversation(conversation_id: str) -> dict:
+    conv = await conversations.get(conversation_id)
     if conv is None:
         raise HTTPException(status_code=404, detail="对话不存在。")
     return {"id": conv.id, "title": conv.title, "messages": conv.messages}
@@ -199,16 +314,18 @@ async def chat(req: ChatRequest) -> StreamingResponse:
         raise HTTPException(status_code=502, detail="GEMINI_API_KEY 未配置，无法对话。")
 
     if req.conversation_id:
-        conv = conversations.get(req.conversation_id)
+        conv = await conversations.get(req.conversation_id)
         if conv is None:
             raise HTTPException(status_code=404, detail="对话不存在。")
     else:
         title = req.message.strip()[:24]
-        conv = conversations.create(req.session_id, title, store.latest_t(req.session_id))
+        conv = await conversations.create(
+            req.session_id, title, await store.latest_t(req.session_id)
+        )
 
     conv.messages.append({"role": "user", "content": req.message.strip()})
     history = list(conv.messages)
-    context = _chat_context(req.session_id)
+    context = await _chat_context(req.session_id)
 
     async def gen():
         yield _sse("meta", {"conversation_id": conv.id, "title": conv.title})
@@ -218,9 +335,10 @@ async def chat(req: ChatRequest) -> StreamingResponse:
                 acc += chunk
                 yield _sse(None, {"text": chunk})
             conv.messages.append({"role": "assistant", "content": acc})
+            await conversations.save(conv)  # 成功后整体持久化（含新一轮问答）
             yield _sse("done", {})
         except GeminiError as exc:
-            # 生成失败：回滚刚加入的用户消息，避免留下无回复的半截对话
+            # 失败不持久化；回滚内存对象里刚加入的用户消息，保持一致
             if conv.messages and conv.messages[-1]["role"] == "user":
                 conv.messages.pop()
             yield _sse("error", {"message": str(exc)})

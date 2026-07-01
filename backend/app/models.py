@@ -13,6 +13,21 @@ class Segment(BaseModel):
     t: float  # 逻辑时间轴：距讲义开始的秒数
 
 
+class Card(BaseModel):
+    """一张 Catchup 摘要卡片（持久化）。"""
+
+    id: str
+    index: int
+    covered_from: float
+    covered_to: float
+    segment_count: int
+    model: str
+    lecture_language: str
+    user_language: str
+    summary: str = ""
+    created_t: float = 0.0
+
+
 class CatchupRequest(BaseModel):
     session_id: str
     window_minutes: float = 5.0
