@@ -672,6 +672,8 @@ cardsNext.addEventListener("click", () => stepCard(1));
 userLang.addEventListener("change", () => applyI18n(userLang.value));
 sendBtn.addEventListener("click", sendChat);
 chatInput.addEventListener("keydown", (e) => {
+  // 输入法组合中的 Enter（拼音选字/确认）不发送；keyCode 229 兼容旧浏览器
+  if (e.isComposing || e.keyCode === 229) return;
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
 });
 newChatBtn.addEventListener("click", newChat);
