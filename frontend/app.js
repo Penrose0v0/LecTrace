@@ -416,14 +416,14 @@ async function startMic() {
   const targetRate = mode === "openai-stt" ? 24000 : 16000;
   setStatus("statusRequestMic");
   try {
-    // 关掉人声通话处理：这些算法为双向通话调，用在课程/系统音频(如 BlackHole)上
-    // 会削波/门限/失真，损害 ASR。转录要的是忠实的原始音频。
+    // 保留浏览器默认人声处理：尤其 autoGainControl 会把偏小的麦克风输入
+    // 提升到可用音量，否则 whisper 会把过小的声音当静音、不出字。
     micStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
       },
     });
   } catch (e) {
@@ -442,6 +442,9 @@ async function startMic() {
   ws.onerror = () => setStatus("statusConnError");
   ws.onopen = () => {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    // 在 ws.onopen（异步回调）里创建的 AudioContext 可能因脱离用户手势而处于
+    // suspended 状态 → onaudioprocess 不触发 → 采不到音。显式 resume。
+    if (audioCtx.state === "suspended") audioCtx.resume();
     const src = audioCtx.createMediaStreamSource(micStream);
     processor = audioCtx.createScriptProcessor(4096, 1, 1);
     const sink = audioCtx.createGain();

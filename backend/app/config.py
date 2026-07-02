@@ -23,10 +23,14 @@ class Settings:
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
     openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-    # OpenAI 实时转录模型（source=openai-stt 时用）；gpt-4o-transcribe 比 mini 准
-    openai_stt_model: str = os.getenv("OPENAI_STT_MODEL", "gpt-4o-transcribe")
+    # OpenAI 实时转录模型（source=openai-stt 时用）。
+    # gpt-realtime-whisper 是原生流式模型，适合连续讲课；gpt-4o(-mini)-transcribe
+    # 是非流式模型，塞进实时会话会把连续语音切成碎片并幻觉。
+    openai_stt_model: str = os.getenv("OPENAI_STT_MODEL", "gpt-realtime-whisper")
     # VAD 静音阈值(ms)：调大避免讲课停顿被切成碎片（默认 200ms 会碎片+幻觉）
     openai_stt_silence_ms: int = int(os.getenv("OPENAI_STT_SILENCE_MS", "800"))
+    # whisper 无 VAD，需定期 commit 才定稿；每多少毫秒提交一次
+    openai_stt_commit_ms: int = int(os.getenv("OPENAI_STT_COMMIT_MS", "4000"))
 
     # Gemini（备选）
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
