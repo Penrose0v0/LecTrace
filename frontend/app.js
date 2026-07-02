@@ -40,7 +40,7 @@ const I18N = {
     lectureLangLabel: "講義の言語", userLangLabel: "あなたの言語",
     windowPre: "直近", windowSuf: "分を振り返る",
     catchupBtn: "ついていけない？要約する",
-    statusIdle: "未接続", statusConnecting: "接続中…",
+    statusIdle: "未接続", statusConnecting: "接続中…", statusReconnecting: "再接続中…",
     statusLive: (s) => `ライブ · ${s}× 再生`, statusEnded: "再生終了",
     statusDisconnected: "切断されました", statusConnError: "接続エラー",
     loadSessionsFailed: "セッションの読み込みに失敗",
@@ -67,7 +67,7 @@ const I18N = {
     lectureLangLabel: "讲义语言", userLangLabel: "用户语言",
     windowPre: "回顾最近", windowSuf: "分钟",
     catchupBtn: "没跟上？点我总结",
-    statusIdle: "未连接", statusConnecting: "连接中…",
+    statusIdle: "未连接", statusConnecting: "连接中…", statusReconnecting: "重连中…",
     statusLive: (s) => `直播中 · ${s}× 回放`, statusEnded: "回放结束",
     statusDisconnected: "已断开", statusConnError: "连接错误",
     loadSessionsFailed: "加载 session 失败",
@@ -94,7 +94,7 @@ const I18N = {
     lectureLangLabel: "Lecture language", userLangLabel: "Your language",
     windowPre: "Recap the last", windowSuf: "min",
     catchupBtn: "Lost track? Summarize",
-    statusIdle: "Not connected", statusConnecting: "Connecting…",
+    statusIdle: "Not connected", statusConnecting: "Connecting…", statusReconnecting: "Reconnecting…",
     statusLive: (s) => `Live · ${s}× replay`, statusEnded: "Replay ended",
     statusDisconnected: "Disconnected", statusConnError: "Connection error",
     loadSessionsFailed: "Failed to load sessions",
@@ -205,7 +205,15 @@ let micStream = null, audioCtx = null, processor = null;
 // 停止/继续状态
 let stopped = false;        // 已停止，可继续或新开
 let resumeSessionId = null; // 下次连接要续接的 session
+let reconnectAttempts = 0;  // 意外断开后的连续重连计数
+let micTargetRate = 16000;  // 当前麦克风目标采样率
+const MAX_RECONNECT = 5;
 const isMicMode = () => mode !== "replay";
+
+// 主动关闭 ws（置空 onclose，避免误触发自动重连）
+function closeWs() {
+  if (ws) { try { ws.onclose = null; ws.close(); } catch (e) {} ws = null; }
+}
 
 async function loadSessions() {
   try {
@@ -274,6 +282,7 @@ function onTranscriptMessage(ev) {
   const msg = JSON.parse(ev.data);
   if (msg.type === "session") {
     sessionId = msg.session_id;
+    reconnectAttempts = 0; // (重)连成功，重置计数
     catchupBtn.disabled = false;
     if (msg.source === "replay") setStatus("statusLive", { param: msg.speed, live: true });
     else setStatus("statusListening", { live: true }); // 麦克风：openai-stt / google-stt
@@ -293,7 +302,7 @@ function startTranscription() {
   stopped = false; resumeSessionId = null; // 全新 session
   transcribing = true;
   updateStartBtn();
-  if (ws) { try { ws.close(); } catch (e) {} ws = null; }
+  closeWs();
   transcriptEl.innerHTML = "";
   removeInterim();
   sessionId = null;
@@ -327,7 +336,7 @@ function stopTranscription() {
     stopAudio();
     enterStopped(); // 立即切换 UI；尾段 final 仍会经 ws 回来并追加
   } else {
-    if (ws) { try { ws.close(); } catch (e) {} }
+    closeWs();
     finishTranscription("statusEnded");
   }
 }
@@ -402,10 +411,8 @@ function downsample(buf, inRate, outRate) {
 }
 
 async function startMic() {
-  // 关掉可能遗留的旧连接（如“已停止”态下尚未自然关闭的 ws）
-  if (ws) { try { ws.close(); } catch (e) {} ws = null; }
-  // OpenAI Realtime 要 24kHz，Google STT 用 16kHz
-  const targetRate = mode === "openai-stt" ? 24000 : 16000;
+  closeWs(); // 关掉可能遗留的旧连接
+  micTargetRate = mode === "openai-stt" ? 24000 : 16000; // OpenAI 24kHz / Google 16kHz
   setStatus("statusRequestMic");
   try {
     // 保留浏览器默认人声处理：尤其 autoGainControl 会把偏小的麦克风输入
@@ -423,35 +430,50 @@ async function startMic() {
     finishTranscription(null);
     return;
   }
+  setupAudioGraph();
+  reconnectAttempts = 0;
+  openMicWs();
+}
+
+// 音频采集图：只建一次，重连时复用（onaudioprocess 引用模块级 ws，重开 ws 即可续发）
+function setupAudioGraph() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  // ws.onopen/异步创建的 AudioContext 可能被浏览器挂起，显式 resume。
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  const src = audioCtx.createMediaStreamSource(micStream);
+  processor = audioCtx.createScriptProcessor(4096, 1, 1);
+  const sink = audioCtx.createGain();
+  sink.gain.value = 0; // 静音接到 destination，保证 onaudioprocess 触发又不回放
+  src.connect(processor);
+  processor.connect(sink);
+  sink.connect(audioCtx.destination);
+  processor.onaudioprocess = (e) => {
+    if (!ws || ws.readyState !== 1) return; // 重连间隙丢弃(几秒)，可接受
+    const input = e.inputBuffer.getChannelData(0);
+    const pcm = floatTo16BitPCM(downsample(input, audioCtx.sampleRate, micTargetRate));
+    ws.send(pcm.buffer);
+  };
+}
+
+// 开/重开麦克风 ws；resumeSessionId 有值则续接同一 session
+function openMicWs() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  // 续接（resume）时带上 session，让后端接着同一 session 追加
   const sessParam = resumeSessionId ? `&session=${encodeURIComponent(resumeSessionId)}` : "";
   resumeSessionId = null;
   ws = new WebSocket(`${proto}://${location.host}/ws/transcribe?source=${mode}&lang=${lectureLang.value}${sessParam}`);
   ws.binaryType = "arraybuffer";
   ws.onmessage = onTranscriptMessage;
-  // 意外断开（含 60 分钟超时）也进入“已停止”态，可续接
-  ws.onclose = () => { if (transcribing) enterStopped(); };
-  ws.onerror = () => setStatus("statusConnError");
-  ws.onopen = () => {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    // 在 ws.onopen（异步回调）里创建的 AudioContext 可能因脱离用户手势而处于
-    // suspended 状态 → onaudioprocess 不触发 → 采不到音。显式 resume。
-    if (audioCtx.state === "suspended") audioCtx.resume();
-    const src = audioCtx.createMediaStreamSource(micStream);
-    processor = audioCtx.createScriptProcessor(4096, 1, 1);
-    const sink = audioCtx.createGain();
-    sink.gain.value = 0; // 静音接到 destination，保证 onaudioprocess 触发又不回放
-    src.connect(processor);
-    processor.connect(sink);
-    sink.connect(audioCtx.destination);
-    processor.onaudioprocess = (e) => {
-      if (!ws || ws.readyState !== 1) return;
-      const input = e.inputBuffer.getChannelData(0);
-      const pcm = floatTo16BitPCM(downsample(input, audioCtx.sampleRate, targetRate));
-      ws.send(pcm.buffer);
-    };
-  };
+  // 意外断开（含 60 分钟超时）→ 自动续接，无需用户操作
+  ws.onclose = () => { if (transcribing) autoReconnect(); };
+}
+
+// 无感续接：带 session 重开 ws，复用已在跑的音频图；连续失败太多才转手动
+function autoReconnect() {
+  reconnectAttempts++;
+  if (reconnectAttempts > MAX_RECONNECT) { enterStopped(); return; }
+  resumeSessionId = sessionId; // 续接同一 session（seq/时间轴接着走）
+  setStatus("statusReconnecting");
+  openMicWs();
 }
 
 // ---------------- 转录高亮 ----------------
