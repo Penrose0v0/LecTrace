@@ -23,7 +23,7 @@ const historyBtn = $("historyBtn");
 const historyPanel = $("historyPanel");
 const modeSelect = $("modeSelect");
 const startBtn2 = $("startBtn");
-const endBtn = $("endBtn");
+const newBtn = $("newBtn");
 
 // ---------------- i18n ----------------
 const I18N = {
@@ -34,7 +34,7 @@ const I18N = {
     modeMic: "マイク·Google", modeMicOpenai: "マイク·OpenAI",
     statusListening: "収音中…", statusRequestMic: "マイクを要求中…",
     statusMicDenied: "マイクが使えません", statusSttError: (m) => `STT エラー：${m}`,
-    pause: "一時停止", resume: "再開", end: "終了", statusPaused: "一時停止中",
+    resume: "再開", newSession: "新しいクラス", statusStopped: "停止しました",
     transcriptHead: "リアルタイム文字起こし",
     catchupSettingsTitle: "振り返り時間の設定",
     lectureLangLabel: "講義の言語", userLangLabel: "あなたの言語",
@@ -61,7 +61,7 @@ const I18N = {
     modeMic: "麦克风·Google", modeMicOpenai: "麦克风·OpenAI",
     statusListening: "收音中…", statusRequestMic: "正在请求麦克风…",
     statusMicDenied: "无法使用麦克风", statusSttError: (m) => `STT 错误：${m}`,
-    pause: "暂停", resume: "继续", end: "结束", statusPaused: "已暂停",
+    resume: "继续", newSession: "新课堂", statusStopped: "已停止",
     transcriptHead: "实时转录",
     catchupSettingsTitle: "设置回顾时间",
     lectureLangLabel: "讲义语言", userLangLabel: "用户语言",
@@ -88,7 +88,7 @@ const I18N = {
     modeMic: "Mic · Google", modeMicOpenai: "Mic · OpenAI",
     statusListening: "Listening…", statusRequestMic: "Requesting mic…",
     statusMicDenied: "Microphone unavailable", statusSttError: (m) => `STT error: ${m}`,
-    pause: "Pause", resume: "Resume", end: "End", statusPaused: "Paused",
+    resume: "Resume", newSession: "New class", statusStopped: "Stopped",
     transcriptHead: "Live transcript",
     catchupSettingsTitle: "Recap window",
     lectureLangLabel: "Lecture language", userLangLabel: "Your language",
@@ -202,9 +202,8 @@ let sessionId = null;
 let mode = "replay";
 let transcribing = false;
 let micStream = null, audioCtx = null, processor = null;
-// resume（暂停/继续）状态
-let paused = false;        // 已暂停，可继续
-let pausing = false;       // 正在暂停收尾（等服务端 end）
+// 停止/继续状态
+let stopped = false;        // 已停止，可继续或新开
 let resumeSessionId = null; // 下次连接要续接的 session
 const isMicMode = () => mode !== "replay";
 
@@ -218,15 +217,16 @@ async function loadSessions() {
 }
 
 function updateStartBtn() {
+  // 主按钮：空闲=开始 / 转录中=停止 / 已停止=继续
   let label;
-  if (paused) label = t("resume");
-  else if (transcribing) label = isMicMode() ? t("pause") : t("stop");
+  if (stopped) label = t("resume");
+  else if (transcribing) label = t("stop");
   else label = t("start");
   startBtn2.textContent = label;
-  startBtn2.classList.toggle("btn-primary", transcribing || paused);
-  // 结束按钮：麦克风模式且转录中或已暂停时显示
-  endBtn.classList.toggle("hidden", !(isMicMode() && (transcribing || paused)));
-  const locked = transcribing || paused;
+  startBtn2.classList.toggle("btn-primary", transcribing || stopped);
+  // “新课堂”按钮：仅在“已停止”时出现（此时可选 继续 或 新开）
+  newBtn.classList.toggle("hidden", !stopped);
+  const locked = transcribing || stopped;
   modeSelect.disabled = locked;
   sessionSelect.disabled = locked;
 }
@@ -282,8 +282,7 @@ function onTranscriptMessage(ev) {
   } else if (msg.type === "segment") {
     appendSegment(msg.seq, msg.text, msg.t);
   } else if (msg.type === "end") {
-    if (pausing) enterPaused();
-    else finishTranscription("statusEnded");
+    if (!stopped) finishTranscription("statusEnded"); // 回放/异常；麦克风已提前进入已停止态
   } else if (msg.type === "error") {
     setStatus("statusSttError", { param: msg.message });
     finishTranscription(null);
@@ -291,7 +290,7 @@ function onTranscriptMessage(ev) {
 }
 
 function startTranscription() {
-  paused = false; pausing = false; resumeSessionId = null; // 全新 session
+  stopped = false; resumeSessionId = null; // 全新 session
   transcribing = true;
   updateStartBtn();
   if (ws) { try { ws.close(); } catch (e) {} ws = null; }
@@ -306,67 +305,58 @@ function startTranscription() {
 
 function finishTranscription(statusKey) {
   transcribing = false;
+  stopped = false;
   updateStartBtn();
   removeInterim();
   stopAudio();
   if (statusKey && statusState.key !== "statusMicDenied") setStatus(statusKey);
 }
 
+// 主按钮：空闲=开始 / 转录中=停止 / 已停止=继续
+function onPrimaryClick() {
+  if (stopped) resumeTranscription();
+  else if (transcribing) stopTranscription();
+  else startTranscription();
+}
+
+// 停止：麦克风立刻进入“已停止”态（继续/新课堂），并让服务端把尾段 final 发完；
+// 回放直接回空闲
 function stopTranscription() {
   if (isMicMode()) {
-    // 发 stop 并停止采集，但保持连接，等服务端把尾部 final + end 发完再收尾
     if (ws) { try { if (ws.readyState === 1) ws.send("stop"); } catch (e) {} }
     stopAudio();
+    enterStopped(); // 立即切换 UI；尾段 final 仍会经 ws 回来并追加
   } else {
-    // 回放：直接关连接即可停止
     if (ws) { try { ws.close(); } catch (e) {} }
     finishTranscription("statusEnded");
   }
 }
 
-// 主按钮：按状态分派 开始 / 暂停 / 继续 / 停止
-function onPrimaryClick() {
-  if (paused) resumeTranscription();
-  else if (transcribing) (isMicMode() ? pauseTranscription() : stopTranscription());
-  else startTranscription();
-}
-
-// 暂停（仅麦克风）：优雅收尾并记住 session，转录留在屏上，可继续
-function pauseTranscription() {
-  pausing = true;
-  if (ws) { try { if (ws.readyState === 1) ws.send("stop"); } catch (e) {} }
-  stopAudio();
-}
-function enterPaused() {
-  pausing = false;
+// 进入“已停止”态（记住会话，供 继续/新课堂）。不主动关 ws：
+// 让服务端把尾段 final 发完再自然关闭；新连接开始时会关掉遗留 ws。
+function enterStopped() {
+  if (stopped) return; // 幂等
   transcribing = false;
-  paused = true;
-  resumeSessionId = sessionId; // 下次续接
+  stopped = true;
+  resumeSessionId = sessionId;
   stopAudio();
-  if (ws) { try { ws.close(); } catch (e) {} ws = null; }
   removeInterim();
-  setStatus("statusPaused");
+  setStatus("statusStopped");
   updateStartBtn();
 }
+
 // 继续：重连续接同一 session，转录接着追加
 function resumeTranscription() {
-  paused = false;
+  stopped = false;
   transcribing = true;
   updateStartBtn();
   removeInterim();
-  startMic(); // startMic 会带上 resumeSessionId
+  startMic(); // 带上 resumeSessionId 续接
 }
-// 结束：彻底收尾，回到空闲（转录保留在屏上，仍可 Catchup/对话）
-function endTranscription() {
-  if (ws) { try { if (ws.readyState === 1) ws.send("stop"); ws.close(); } catch (e) {} ws = null; }
-  stopAudio();
-  transcribing = false;
-  paused = false;
-  pausing = false;
-  resumeSessionId = null;
-  removeInterim();
-  setStatus("statusEnded");
-  updateStartBtn();
+
+// 新课堂：开一个全新 session（丢弃可续接的旧会话）
+function newSession() {
+  startTranscription();
 }
 
 function stopAudio() {
@@ -412,6 +402,8 @@ function downsample(buf, inRate, outRate) {
 }
 
 async function startMic() {
+  // 关掉可能遗留的旧连接（如“已停止”态下尚未自然关闭的 ws）
+  if (ws) { try { ws.close(); } catch (e) {} ws = null; }
   // OpenAI Realtime 要 24kHz，Google STT 用 16kHz
   const targetRate = mode === "openai-stt" ? 24000 : 16000;
   setStatus("statusRequestMic");
@@ -438,7 +430,8 @@ async function startMic() {
   ws = new WebSocket(`${proto}://${location.host}/ws/transcribe?source=${mode}&lang=${lectureLang.value}${sessParam}`);
   ws.binaryType = "arraybuffer";
   ws.onmessage = onTranscriptMessage;
-  ws.onclose = () => { if (pausing) enterPaused(); else if (transcribing) finishTranscription("statusEnded"); };
+  // 意外断开（含 60 分钟超时）也进入“已停止”态，可续接
+  ws.onclose = () => { if (transcribing) enterStopped(); };
   ws.onerror = () => setStatus("statusConnError");
   ws.onopen = () => {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -664,7 +657,7 @@ async function loadConversation(id) {
 // ---------------- 事件绑定 ----------------
 windowSlider.addEventListener("input", () => { windowVal.textContent = windowSlider.value; });
 startBtn2.addEventListener("click", onPrimaryClick);
-endBtn.addEventListener("click", endTranscription);
+newBtn.addEventListener("click", newSession);
 modeSelect.addEventListener("change", applyMode);
 catchupBtn.addEventListener("click", doCatchup);
 cardsPrev.addEventListener("click", () => stepCard(-1));
