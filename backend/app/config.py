@@ -57,6 +57,12 @@ class Settings:
     gcp_project: str = os.getenv("GCP_PROJECT", "") or os.getenv("GOOGLE_CLOUD_PROJECT", "")
     firestore_database: str = os.getenv("FIRESTORE_DATABASE", "(default)")
 
+    # ---- 录音保存 ----
+    # off（默认）/ local（写到 RECORDINGS_DIR，开发用）/ gcs（写到 RECORDINGS_BUCKET）
+    recordings: str = os.getenv("RECORDINGS", "off")
+    recordings_dir: Path = ROOT_DIR / os.getenv("RECORDINGS_DIR", "data/recordings")
+    recordings_bucket: str = os.getenv("RECORDINGS_BUCKET", "")
+
     # ---- 登录（Google Sign-In）----
     # OAuth 2.0 Web 客户端 ID（GCP Console → APIs & Services → Credentials）
     google_client_id: str = os.getenv("GOOGLE_CLIENT_ID", "")

@@ -69,6 +69,8 @@ class SessionInfo(LectureMeta):
     updated_at: float = 0.0
     segment_count: int = 0
     latest_t: float = 0.0  # 讲义时长（最后一段的逻辑时间）
+    # 录音 take 列表：{path, sample_rate, channels, sample_width, t_offset, started_at, bytes, duration_sec}
+    recordings: list[dict] = Field(default_factory=list)
 
 
 # ---------------- 对话 ----------------

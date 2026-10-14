@@ -88,6 +88,24 @@ export GCP_PROJECT=$(gcloud config get-value project)
 > 数据模型：`sessions/{id}`（含 `segments/*`、`cards/*` 子集合）、`conversations/{id}`。
 > Cloud Run 上用服务账号即可访问 Firestore，无需 key 文件。
 
+## 一·七、录音保存（可选）
+
+麦克风上行的原始 PCM 可以顺手存下来（回放功能以后再做，数据先留着）。每次连接是一个 take
+（暂停再继续就是下一个），元信息（采样率、对应转录时间轴的 `t_offset`、时长）记在课堂文档的 `recordings` 里。
+
+- 本地：`RECORDINGS=local`，文件写到 `data/recordings/sessions/{id}/take-000.pcm`（已 gitignore）。
+- 线上：`RECORDINGS=gcs` + `RECORDINGS_BUCKET=lectrace-recordings`，运行时服务账号需要
+  `roles/storage.objectCreator`（只写）：
+
+```bash
+gcloud storage buckets create gs://lectrace-recordings --location=asia-northeast1 --uniform-bucket-level-access
+gcloud storage buckets add-iam-policy-binding gs://lectrace-recordings \
+  --member=serviceAccount:176778301118-compute@developer.gserviceaccount.com --role=roles/storage.objectCreator
+```
+
+> 存的是无头 PCM（16-bit 单声道，采样率见元信息）：长度事先不知道而 GCS 对象不可修改，没法回填 WAV 头。
+> 回放时按对象大小拼一个 WAV 头即可。一小时约 170 MB。
+
 ## 二、部署到 Cloud Run
 
 ```bash
@@ -115,6 +133,7 @@ backend/app/
 ├── config.py          全部环境变量
 ├── auth.py            Google ID token 校验、签名 cookie、current_user 依赖
 ├── deps.py            store 单例、owned_session 依赖、SSE 小工具
+├── recording.py       录音落盘（本地目录 / GCS 流式上传），独立线程写入
 ├── models.py          pydantic 数据结构（Segment / Card / LectureMeta / SessionInfo / Conversation / ...）
 ├── prompts/           ★ 所有 prompt：ja.toml / zh.toml / en.toml 按用户语言各一份（key 相同），
 │                        __init__.py 只负责加载和填充。改措辞只改 toml；加语言就加一个文件

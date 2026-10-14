@@ -26,6 +26,10 @@ class Store(Protocol):
         """某用户的全部讲义，按 created_at 降序。"""
         ...
 
+    async def add_recording(self, session_id: str, info: dict) -> None:
+        """追加一个录音 take 的元信息（见 recording.py）。"""
+        ...
+
     # ---- 转录段落 ----
     async def append(self, session_id: str, segment: Segment) -> None: ...
 

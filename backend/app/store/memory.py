@@ -37,6 +37,12 @@ class MemoryStore:
         out.sort(key=lambda s: s.created_at, reverse=True)
         return out
 
+    async def add_recording(self, session_id: str, info: dict) -> None:
+        meta = self._meta.get(session_id)
+        if meta is not None:
+            meta.setdefault("recordings", []).append(info)
+            meta["updated_at"] = time.time()
+
     def _info(self, session_id: str, meta: dict) -> SessionInfo:
         segs = self._segments.get(session_id, [])
         known = {k: v for k, v in meta.items() if k in SessionInfo.model_fields}

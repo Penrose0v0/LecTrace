@@ -13,3 +13,6 @@ google-cloud-firestore>=2.19
 
 # 实时转录（source=google-stt 时需要）
 google-cloud-speech>=2.27
+
+# 录音保存（RECORDINGS=gcs 时需要）
+google-cloud-storage>=2.16

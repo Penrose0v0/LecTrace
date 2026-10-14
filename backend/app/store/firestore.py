@@ -55,6 +55,11 @@ class FirestoreStore:
         out.sort(key=lambda s: s.created_at, reverse=True)
         return out
 
+    async def add_recording(self, session_id: str, info: dict) -> None:
+        await self._session(session_id).set(
+            {"recordings": firestore.ArrayUnion([info]), "updated_at": time.time()}, merge=True
+        )
+
     @staticmethod
     def _info(session_id: str, d: dict) -> SessionInfo:
         known = {k: v for k, v in d.items() if k in SessionInfo.model_fields and k != "id"}

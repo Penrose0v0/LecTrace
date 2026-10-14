@@ -17,6 +17,15 @@ OnText = Callable[[str], Awaitable[None]]
 STTRunner = Callable[["asyncio.Queue[bytes | None]", str, OnText, OnText], Coroutine]
 
 
+def stt_sample_rate(source: str) -> int:
+    """前端按来源上行的 PCM 采样率（16-bit 单声道）。"""
+    if source == "openai-stt":
+        from .openai_stt import SAMPLE_RATE
+    else:
+        from .google_stt import SAMPLE_RATE
+    return SAMPLE_RATE
+
+
 def make_stt_runner(source: str, settings: Settings) -> STTRunner:
     if source == "openai-stt":
         from .openai_stt import run_stt as openai_run
@@ -36,4 +45,4 @@ def make_stt_runner(source: str, settings: Settings) -> STTRunner:
     raise ValueError(f"未知转录来源: {source}")
 
 
-__all__ = ["ReplaySource", "list_demo_sessions", "make_stt_runner", "STTRunner", "OnText"]
+__all__ = ["ReplaySource", "list_demo_sessions", "make_stt_runner", "stt_sample_rate", "STTRunner", "OnText"]

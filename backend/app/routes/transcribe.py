@@ -20,7 +20,8 @@ from ..auth import ws_user
 from ..config import get_settings
 from ..deps import get_store
 from ..models import Segment, SessionInfo
-from ..transcription import ReplaySource, list_demo_sessions, make_stt_runner
+from ..recording import open_recorder
+from ..transcription import ReplaySource, list_demo_sessions, make_stt_runner, stt_sample_rate
 
 log = logging.getLogger("lectrace.ws")
 router = APIRouter()
@@ -138,25 +139,41 @@ async def _run_stt(ws: WebSocket, info: SessionInfo) -> None:
         await store.append(info.id, seg)
         await ws.send_json({"type": "segment", **seg.model_dump()})
 
+    # 录音：同一份 PCM 同时写进存储（RECORDINGS=off 时为 None）
+    recorder = open_recorder(
+        settings, info.id, take=len(info.recordings), sample_rate=stt_sample_rate(info.source), t_offset=t_offset
+    )
+
+    async def on_audio(chunk: bytes) -> None:
+        await audio_queue.put(chunk)
+        if recorder is not None:
+            recorder.write(chunk)
+
     async def receive() -> None:
         try:
-            await _wait_stop(ws, on_audio=audio_queue.put)
+            await _wait_stop(ws, on_audio=on_audio)
         finally:
             await audio_queue.put(None)  # 通知 STT 结束
 
     runner = make_stt_runner(info.source, settings)
     recv_task = asyncio.create_task(receive())
     stt_task = asyncio.create_task(runner(audio_queue, info.lecture_language, on_interim, on_final))
-    done, _ = await asyncio.wait({recv_task, stt_task}, return_when=asyncio.FIRST_COMPLETED)
-
-    if stt_task in done:
-        # STT 先结束多半是出错（缺凭证 / 权限等）
-        recv_task.cancel()
-        if (exc := stt_task.exception()) is not None:
-            raise exc
-        return
-    # 收流结束（暂停 / 断开）：等 STT 把尾部 final 冲出来再结束，不要立即 cancel
     try:
-        await asyncio.wait_for(stt_task, timeout=STT_FLUSH_TIMEOUT)
-    except asyncio.TimeoutError:
-        stt_task.cancel()
+        done, _ = await asyncio.wait({recv_task, stt_task}, return_when=asyncio.FIRST_COMPLETED)
+        if stt_task in done:
+            # STT 先结束多半是出错（缺凭证 / 权限等）
+            recv_task.cancel()
+            if (exc := stt_task.exception()) is not None:
+                raise exc
+            return
+        # 收流结束（暂停 / 断开）：等 STT 把尾部 final 冲出来再结束，不要立即 cancel
+        try:
+            await asyncio.wait_for(stt_task, timeout=STT_FLUSH_TIMEOUT)
+        except asyncio.TimeoutError:
+            stt_task.cancel()
+    finally:
+        if recorder is not None:
+            rec = await asyncio.to_thread(recorder.close_blocking)
+            if rec is not None:
+                await store.add_recording(info.id, rec)
+                log.info("recording saved %s (%.0fs)", rec["path"], rec["duration_sec"])
