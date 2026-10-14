@@ -19,7 +19,8 @@ async def summarize_stream(
     """最近 X 分钟的转录 → 摘要（逐块产出）。"""
     llm = get_llm(settings)
     messages = prompts.catchup_messages(segments, window_minutes, lecture)
-    async for chunk in llm.stream(messages, max_tokens=1024, temperature=0.3):
+    # 只要两三句话；上限设小，既快又防止模型啰嗦
+    async for chunk in llm.stream(messages, max_tokens=300, temperature=0.3):
         yield chunk
 
 

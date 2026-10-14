@@ -206,7 +206,7 @@ async function parseSSE(body, handlers) {
 // =====================================================================
 const state = {
   user: null,
-  prefs: { ui_language: "ja", lecture_language: "ja", window_minutes: 5, theme: "dark" },
+  prefs: { ui_language: "ja", lecture_language: "ja", window_minutes: 3, theme: "dark" },
   authConfig: { google_client_id: "", dev_login: false },
   view: "lecture",
   session: null,          // 当前讲义（服务端 SessionInfo），新建未开始时为 null
@@ -358,7 +358,7 @@ function defaultMeta() {
     title: "", description: "",
     lecture_language: state.prefs.lecture_language || "ja",
     user_language: state.prefs.ui_language || "ja",
-    window_minutes: Number(state.prefs.window_minutes) || 5,
+    window_minutes: Number(state.prefs.window_minutes) || 3,
     source: "openai-stt", file: "",
   };
 }
@@ -414,7 +414,7 @@ function pickMeta(s) {
   return {
     title: s.title || "", description: s.description || "",
     lecture_language: s.lecture_language || "ja", user_language: s.user_language || "ja",
-    window_minutes: Number(s.window_minutes) || 5, source: s.source || "openai-stt", file: s.file || "",
+    window_minutes: Number(s.window_minutes) || 3, source: s.source || "openai-stt", file: s.file || "",
   };
 }
 
