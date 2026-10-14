@@ -52,15 +52,19 @@ class ReplaySource:
         path: Path,
         speed: float = 8.0,
         max_gap_sec: float = 2.0,
+        start_after_t: float = 0.0,
     ) -> None:
         self._path = path
         self._speed = max(speed, 0.1)
         self._max_gap = max_gap_sec
+        self._start_after_t = start_after_t  # 续播：只推 t 大于此值的段落
         self.segments = _load_segments(path)
 
     async def stream(self):
-        prev_t = 0.0
+        prev_t = self._start_after_t
         for seg in self.segments:
+            if seg.t <= self._start_after_t:
+                continue
             gap = max(0.0, seg.t - prev_t) / self._speed
             await asyncio.sleep(min(gap, self._max_gap))
             prev_t = seg.t

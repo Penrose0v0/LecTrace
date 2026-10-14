@@ -57,6 +57,24 @@ class Settings:
     gcp_project: str = os.getenv("GCP_PROJECT", "") or os.getenv("GOOGLE_CLOUD_PROJECT", "")
     firestore_database: str = os.getenv("FIRESTORE_DATABASE", "(default)")
 
+    # ---- 登录（Google Sign-In）----
+    # OAuth 2.0 Web 客户端 ID（GCP Console → APIs & Services → Credentials）
+    google_client_id: str = os.getenv("GOOGLE_CLIENT_ID", "")
+    # 会话 cookie 的签名密钥；生产必须设置（多实例 / 重启后登录态才不丢）
+    session_secret: str = os.getenv("SESSION_SECRET", "")
+    # 登录态有效期（天）
+    session_days: int = int(os.getenv("SESSION_DAYS", "30"))
+    # 本地开发免 Google 登录：未配置 client id 且不在 Cloud Run 上时自动开启，
+    # 也可用 AUTH_DEV_LOGIN=1/0 强制开/关
+    _auth_dev_login_env: str = os.getenv("AUTH_DEV_LOGIN", "")
+    on_cloud_run: bool = bool(os.getenv("K_SERVICE"))
+
+    @property
+    def auth_dev_login(self) -> bool:
+        if self._auth_dev_login_env:
+            return self._auth_dev_login_env.lower() in ("1", "true", "yes")
+        return not self.google_client_id and not self.on_cloud_run
+
     @property
     def gemini_configured(self) -> bool:
         return bool(self.gemini_api_key)

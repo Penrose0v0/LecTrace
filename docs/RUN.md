@@ -24,11 +24,30 @@ GEMINI_API_KEY=你的key
 ```
 
 打开 http://127.0.0.1:8000 ：
-1. 选一个归档课堂 → **开始转录**（默认 8× 加速回放真实日语讲义）。
-2. 转录滚动几段后，随时拖动"最近 X 分钟"滑块，点 **没跟上？点我总结**。
-3. 右侧出现 Gemini 生成的 Catchup 摘要。
+1. 登录页：本地没配 `GOOGLE_CLIENT_ID` 时显示「以本地开发身份继续」，点它进入。
+2. 新建课堂时 meta 面板默认展开：填标题 / 描述、讲义语言、你的语言、Catch-up 时长；
+   来源选「回放归档」可以不用麦克风（默认 8× 加速回放真实日语讲义）。
+3. 按 ● 开始，面板自动收起、转录开始滚动。右侧 **Catch-up** 总结最近 X 分钟，
+   **Explain** 解释老师刚才提到的术语，输入框可以自由提问；结果都挂在对话线程里，
+   点 Catch-up 结果上方的时间范围会在转录里高亮对应段落。
+4. 左侧「历史」能回看过去的课堂；打开后按 ▶ 可以续接转录（回放课不能续接）。
 
 > 调回放速度：改 `.env` 的 `REPLAY_SPEED`（越大越快），或前端 WS 带 `?speed=`。
+
+## 一·三、Google 登录
+
+本地开发可以一直用「本地开发登录」。要用真实 Google 账号（线上必须）：
+
+1. GCP Console → **APIs & Services → OAuth consent screen**：建一个 External 应用（测试阶段把自己的邮箱加进 Test users）。
+2. **APIs & Services → Credentials → Create credentials → OAuth client ID → Web application**，
+   Authorized JavaScript origins 填：
+   - `http://localhost:8000` 和 `http://127.0.0.1:8000`（本地）
+   - `https://lectrace-jngknpqwya-an.a.run.app`（Cloud Run）
+   不需要 redirect URI（前端用的是 Google Identity Services 弹窗模式）。
+3. 把 client id 填进 `.env` 的 `GOOGLE_CLIENT_ID`；再生成一个 `SESSION_SECRET`（`openssl rand -hex 32`）。
+
+> 数据归属：讲义（`sessions/{id}`）带 `user_id`，列表 / 详情 / WebSocket / Catch-up / 对话都校验归属。
+> 用户偏好存在 `users/{user_id}`。
 
 ## 一·五、启用 Firestore 持久化（可选）
 
@@ -81,6 +100,11 @@ gcloud run deploy lectrace \
 `Dockerfile` 已把后端 + 前端 + 回放数据打进单容器，Cloud Run 注入的 `$PORT` 由 uvicorn 承接，WebSocket 长连接开箱可用。
 
 要在 Cloud Run 上开持久化，追加 `STORE_BACKEND=firestore,GCP_PROJECT=<项目>`，并确保运行时服务账号有 `roles/datastore.user`（访问 Firestore，无需 key 文件）。
+
+登录相关必须追加 `GOOGLE_CLIENT_ID=<client id>,SESSION_SECRET=<随机串>`：Cloud Run 上不会开本地开发登录，
+缺 client id 时登录页没有任何可点的按钮；缺 `SESSION_SECRET` 时每个实例各自随机签名，多实例 / 重启会掉登录态。
+
+> 当前线上（2026-10 查看）还没有这两个变量，下次部署记得带上。
 
 ## 三、从 demo 走向目标架构
 

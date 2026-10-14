@@ -1,94 +1,217 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="ja" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LecTrace</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">LecTrace<span class="tag">demo</span></div>
-    <div class="controls">
-      <select id="modeSelect" data-i18n-title="modeTitle">
-        <option value="openai-stt" data-i18n="modeMicOpenai" selected>麦克风·OpenAI</option>
-        <option value="google-stt" data-i18n="modeMic">麦克风·Google</option>
-        <option value="replay" data-i18n="modeReplay">回放 demo</option>
-      </select>
-      <select id="sessionSelect" data-i18n-title="sessionTitle"></select>
-      <button id="startBtn" class="btn" data-i18n="start">开始转录</button>
-      <button id="newBtn" class="btn btn-sm hidden" data-i18n="newSession">新课堂</button>
-      <span id="status" class="status"></span>
+  <!-- SVG 图标库 -->
+  <svg width="0" height="0" style="position:absolute">
+    <defs>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+      <symbol id="i-history" viewBox="0 0 24 24"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1M3.5 4.5v4h4M12 8v4.5l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-gear" viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+      <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4.5 20.5c1.2-3.6 4-5.5 7.5-5.5s6.3 1.9 7.5 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3" fill="currentColor"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><rect x="7" y="6" width="3.5" height="12" rx="1.2" fill="currentColor"/><rect x="13.5" y="6" width="3.5" height="12" rx="1.2" fill="currentColor"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-dots" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="18" cy="12" r="1.6" fill="currentColor"/></symbol>
+    </defs>
+  </svg>
+
+  <!-- ===================== 登录 ===================== -->
+  <div id="loginView" class="login hidden">
+    <div class="login-card">
+      <div class="brand-mark">LecTrace</div>
+      <p class="login-sub" data-i18n="loginSub">聞き逃しを、すぐ取り戻す。</p>
+      <div id="googleBtn" class="google-btn"></div>
+      <button id="devLoginBtn" class="btn btn-primary hidden">Continue as local dev</button>
+      <p id="loginHint" class="login-hint"></p>
     </div>
-  </header>
+  </div>
 
-  <main class="layout">
-    <!-- 左：转录区 -->
-    <section class="col transcript-col">
-      <div class="pane-head" data-i18n="transcriptHead">实时转录</div>
-      <div id="transcript" class="transcript"></div>
-    </section>
+  <!-- ===================== 应用 ===================== -->
+  <div id="appShell" class="shell hidden">
+    <nav class="side">
+      <button id="navLogo" class="side-logo" title="LecTrace">LT</button>
+      <button class="side-item" id="navNew" data-i18n-title="navNew">
+        <svg class="icon"><use href="#i-plus"/></svg>
+      </button>
+      <button class="side-item" id="navHistory" data-i18n-title="navHistory">
+        <svg class="icon"><use href="#i-history"/></svg>
+      </button>
+      <div class="side-spacer"></div>
+      <button class="side-item" id="navProfile" data-i18n-title="navProfile">
+        <span id="avatar" class="avatar"><svg class="icon"><use href="#i-user"/></svg></span>
+      </button>
+      <button class="side-item" id="navSettings" data-i18n-title="navSettings">
+        <svg class="icon"><use href="#i-gear"/></svg>
+      </button>
+    </nav>
 
-    <!-- 中：Catchup 区 -->
-    <section class="col catchup-col">
-      <!-- 上：设置回顾时间 -->
-      <div class="catchup-settings">
-        <div class="pane-head" data-i18n="catchupSettingsTitle">设置回顾时间</div>
-        <div class="lang-row">
-          <label class="lang-field">
-            <span data-i18n="lectureLangLabel">讲义语言</span>
-            <select id="lectureLang">
-              <option value="ja" selected>日本語</option>
+    <!-- 历史抽屉：从侧栏旁展开 -->
+    <aside id="historyDrawer" class="drawer">
+      <div class="drawer-head" data-i18n="historyTitle">History</div>
+      <div id="historyList" class="history-list"></div>
+    </aside>
+
+    <main class="main">
+      <!-- ---------- 讲义视图：转录舞台 + 对话 ---------- -->
+      <section id="lectureView" class="view lecture">
+        <div class="stage">
+          <div class="stage-head">
+            <button id="recBtn" class="rec" title="">
+              <svg class="icon rec-icon"><use id="recIcon" href="#i-mic"/></svg>
+            </button>
+            <div class="wave-wrap">
+              <canvas id="wave" class="wave"></canvas>
+              <div id="liveStatus" class="live-status"></div>
+            </div>
+            <button id="metaBtn" class="pill meta-pill">
+              <span id="metaLabel"></span>
+              <svg class="icon icon-sm chev"><use href="#i-chevron"/></svg>
+            </button>
+          </div>
+
+          <div class="stage-body">
+            <div id="transcript" class="transcript"></div>
+            <div id="transcriptEmpty" class="transcript-empty hidden"></div>
+
+            <!-- 渐变分界 + 下拉的 meta 面板 -->
+            <div id="sheet" class="sheet">
+              <div id="sheetInner" class="sheet-inner">
+                <div id="sheetBody" class="sheet-body">
+                  <div class="meta-note" data-i18n="metaNote">All optional.</div>
+                  <input id="mTitle" class="meta-title" type="text" autocomplete="off" spellcheck="false" />
+                  <textarea id="mDesc" class="meta-desc" rows="1"></textarea>
+                  <div class="meta-row">
+                    <label class="mini">
+                      <span data-i18n="fLectureLang">Lecture language</span>
+                      <select id="mLectureLang">
+                        <option value="ja">日本語</option>
+                        <option value="zh">中文</option>
+                        <option value="en">English</option>
+                      </select>
+                    </label>
+                    <label class="mini">
+                      <span data-i18n="fUserLang">Your language</span>
+                      <select id="mUserLang">
+                        <option value="ja">日本語</option>
+                        <option value="zh">中文</option>
+                        <option value="en">English</option>
+                      </select>
+                    </label>
+                    <label class="mini">
+                      <span data-i18n="fWindow">Catch-up window</span>
+                      <div class="range-row">
+                        <input id="mWindow" type="range" min="1" max="30" step="1" value="5" />
+                        <b id="mWindowVal">5</b><span class="unit" data-i18n="minUnit">min</span>
+                      </div>
+                    </label>
+                    <label class="mini">
+                      <span data-i18n="fSource">Source</span>
+                      <select id="mSource">
+                        <option value="openai-stt" data-i18n="srcOpenai">Microphone · OpenAI</option>
+                        <option value="google-stt" data-i18n="srcGoogle">Microphone · Google</option>
+                        <option value="replay" data-i18n="srcReplay">Replay archive</option>
+                      </select>
+                    </label>
+                    <label class="mini hidden" id="mFileField">
+                      <span data-i18n="fFile">Archive file</span>
+                      <select id="mFile"></select>
+                    </label>
+                  </div>
+                  <div id="sheetHint" class="sheet-hint"></div>
+                </div>
+              </div>
+              <div class="sheet-fade"></div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="chat">
+          <div class="chat-head">
+            <span id="threadTitle" class="thread-title"></span>
+            <div class="menu-anchor">
+              <button id="threadBtn" class="pill"><span data-i18n="tellMe">Tell me</span> <svg class="icon icon-sm"><use href="#i-dots"/></svg></button>
+              <div id="threadMenu" class="menu hidden"></div>
+            </div>
+          </div>
+          <div id="chatMessages" class="chat-messages"></div>
+          <div class="chat-foot">
+            <div class="quick">
+              <button id="catchupBtn" class="pill quick-btn" disabled><span data-i18n="catchup">Catch-up</span><span id="catchupWin" class="quick-sub"></span></button>
+              <button id="explainBtn" class="pill quick-btn" disabled><span data-i18n="explain">Explain</span></button>
+            </div>
+            <div class="chat-input">
+              <textarea id="chatInput" rows="1" data-i18n-ph="chatPlaceholder"></textarea>
+              <button id="sendBtn" class="send" title="send"><svg class="icon"><use href="#i-arrow-up"/></svg></button>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <!-- ---------- 设置 ---------- -->
+      <section id="settingsView" class="view page hidden">
+        <h1 data-i18n="settingsTitle">Settings</h1>
+        <div class="settings-card">
+          <label class="field">
+            <span data-i18n="sUiLang">Interface & summary language</span>
+            <select id="sUiLang">
+              <option value="ja">日本語</option>
               <option value="zh">中文</option>
               <option value="en">English</option>
             </select>
           </label>
-          <label class="lang-field">
-            <span data-i18n="userLangLabel">用户语言</span>
-            <select id="userLang">
-              <option value="ja" selected>日本語</option>
+          <label class="field">
+            <span data-i18n="sLectureLang">Default lecture language</span>
+            <select id="sLectureLang">
+              <option value="ja">日本語</option>
               <option value="zh">中文</option>
               <option value="en">English</option>
             </select>
           </label>
+          <label class="field">
+            <span data-i18n="sWindow">Default catch-up window</span>
+            <div class="range-row">
+              <input id="sWindow" type="range" min="1" max="30" step="1" value="5" />
+              <b id="sWindowVal">5</b><span class="unit" data-i18n="minUnit">min</span>
+            </div>
+          </label>
+          <label class="field">
+            <span data-i18n="sTheme">Theme</span>
+            <select id="sTheme">
+              <option value="dark" data-i18n="themeDark">Dark</option>
+              <option value="light" data-i18n="themeLight" disabled>Light (coming soon)</option>
+            </select>
+          </label>
+          <div class="settings-actions">
+            <button id="savePrefsBtn" class="btn btn-primary" data-i18n="save">Save</button>
+            <span id="prefsStatus" class="muted"></span>
+          </div>
         </div>
-        <label class="window-label">
-          <span data-i18n="windowPre">回顾最近</span>
-          <b id="windowVal">5</b>
-          <span data-i18n="windowSuf">分钟</span>
-          <input id="windowSlider" type="range" min="1" max="15" value="5" step="1" />
-        </label>
-        <button id="catchupBtn" class="btn btn-primary" data-i18n="catchupBtn" disabled>没跟上？点我总结</button>
-      </div>
+      </section>
+    </main>
 
-      <!-- 下：摘要卡片 -->
-      <div class="catchup-cards">
-        <div class="cards-nav">
-          <button id="cardsPrev" class="icon-btn" title="prev">‹</button>
-          <div id="cardChips" class="card-chips"></div>
-          <button id="cardsNext" class="icon-btn" title="next">›</button>
-        </div>
-        <div id="cardBody" class="card-body"></div>
-      </div>
-    </section>
-
-    <!-- 右：AI 对话区 -->
-    <section class="col chat-col">
-      <div class="chat-head">
-        <span class="pane-head" data-i18n="aiTitle">AI 对话</span>
-        <div class="chat-actions">
-          <button id="newChatBtn" class="btn btn-sm" data-i18n="newChat">新对话</button>
-          <button id="historyBtn" class="btn btn-sm" data-i18n="history">历史对话</button>
+    <!-- 个人资料弹层 -->
+    <div id="profileMenu" class="menu profile-menu hidden">
+      <div class="profile-row">
+        <span id="profileAvatar" class="avatar lg"></span>
+        <div class="profile-text">
+          <div id="profileName" class="profile-name"></div>
+          <div id="profileEmail" class="profile-email"></div>
         </div>
       </div>
-      <div id="chatMessages" class="chat-messages"></div>
-      <div id="historyPanel" class="history-panel hidden"></div>
-      <div class="chat-input">
-        <textarea id="chatInput" rows="2" data-i18n-ph="chatPlaceholder"></textarea>
-        <button id="sendBtn" class="btn btn-primary" data-i18n="send">发送</button>
-      </div>
-    </section>
-  </main>
+      <button id="logoutBtn" class="menu-item" data-i18n="logout">Sign out</button>
+    </div>
+  </div>
 
   <script src="/app.js"></script>
 </body>

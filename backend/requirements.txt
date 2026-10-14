@@ -5,6 +5,9 @@ websockets>=13
 httpx>=0.27
 python-dotenv>=1.0
 
+# Google 登录（ID token 校验）
+google-auth>=2.30
+
 # 持久化（STORE_BACKEND=firestore 时需要）
 google-cloud-firestore>=2.19
 

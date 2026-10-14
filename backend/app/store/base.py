@@ -8,16 +8,30 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from ..models import Card, Segment
+from ..models import Card, Segment, SessionInfo, UserPrefs
 
 
 class TranscriptStore(Protocol):
+    # ---- 会话（讲义）----
     async def create_session(self, session_id: str, meta: dict | None = None) -> None: ...
 
+    async def get_session(self, session_id: str) -> SessionInfo | None:
+        """会话元信息 + 统计；不存在返回 None。"""
+        ...
+
+    async def update_session(self, session_id: str, patch: dict) -> None:
+        """只改给定字段（并刷新 updated_at）。"""
+        ...
+
+    async def list_sessions(self, user_id: str) -> list[SessionInfo]:
+        """某用户的全部讲义，按 created_at 降序。"""
+        ...
+
+    # ---- 转录段落 ----
     async def append(self, session_id: str, segment: Segment) -> None: ...
 
     async def all_segments(self, session_id: str) -> list[Segment]:
-        """会话全部段落（resume 续接时取末尾 seq/t）。"""
+        """会话全部段落（回看 / resume 续接时取末尾 seq/t）。"""
         ...
 
     async def latest_t(self, session_id: str) -> float:
@@ -36,3 +50,8 @@ class TranscriptStore(Protocol):
         ...
 
     async def card_count(self, session_id: str) -> int: ...
+
+    # ---- 用户偏好 ----
+    async def get_prefs(self, user_id: str) -> UserPrefs | None: ...
+
+    async def save_prefs(self, user_id: str, prefs: UserPrefs) -> None: ...

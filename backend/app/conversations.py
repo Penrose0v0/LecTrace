@@ -18,7 +18,9 @@ class Conversation:
         self.session_id = session_id
         self.title = title
         self.created_t = created_t
-        self.messages: list[dict] = []  # [{"role": "user"|"assistant", "content": str}]
+        # [{"role": "user"|"assistant", "content": str, ...}]
+        # Catch-up 摘要也存在这里：kind="catchup" + covered_from/covered_to/segment_count
+        self.messages: list[dict] = []
 
     def summary(self) -> dict:
         return {
