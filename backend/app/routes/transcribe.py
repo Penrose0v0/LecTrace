@@ -16,6 +16,7 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from .. import quota
 from ..auth import ws_user
 from ..config import get_settings
 from ..deps import get_store
@@ -42,17 +43,27 @@ async def ws_transcribe(ws: WebSocket) -> None:
         await ws.send_json({"type": "error", "message": "讲义不存在或无权访问。"})
         await ws.close(code=4404)
         return
+    # 单节课时长上限（非管理员）：已到上限就不再开流
+    cap = quota.lecture_cap_sec(user, settings)
+    if cap is not None and info.latest_t >= cap:
+        await _send(ws, _limit_msg(cap))
+        await _send(ws, {"type": "end"})
+        return
     try:
         if info.source == "replay":
-            await _run_replay(ws, info)
+            await _run_replay(ws, info, cap)
         else:
-            await _run_stt(ws, info)
+            await _run_stt(ws, info, cap)
     except WebSocketDisconnect:
         return
     except Exception as exc:  # noqa: BLE001 - 兜底反馈给前端
         log.exception("transcribe failed")
         await _send(ws, {"type": "error", "message": str(exc)})
     await _send(ws, {"type": "end"})
+
+
+def _limit_msg(cap_sec: float) -> dict:
+    return {"type": "limit", "code": "quota_lecture_minutes", "limit": round(cap_sec / 60)}
 
 
 async def _send(ws: WebSocket, data: dict) -> None:
@@ -76,7 +87,7 @@ async def _wait_stop(ws: WebSocket, on_audio=None) -> None:
 
 
 # ---------------- 回放 ----------------
-async def _run_replay(ws: WebSocket, info: SessionInfo) -> None:
+async def _run_replay(ws: WebSocket, info: SessionInfo, cap: float | None) -> None:
     settings = get_settings()
     store = get_store()
     speed = float(ws.query_params.get("speed") or settings.replay_speed)
@@ -97,21 +108,27 @@ async def _run_replay(ws: WebSocket, info: SessionInfo) -> None:
     })
 
     stopper = asyncio.create_task(_wait_stop(ws))
+    hit_limit = False
     try:
         async for seg in replay.stream():
             if stopper.done():  # 暂停 / 断开：停在当前位置，下次续播
+                break
+            if cap is not None and seg.t > cap:
+                hit_limit = True
                 break
             await store.append(info.id, seg)
             await ws.send_json({"type": "segment", **seg.model_dump()})
     finally:
         stopper.cancel()
+    if hit_limit:
+        await _send(ws, _limit_msg(cap))
 
 
 # ---------------- 麦克风实时 STT ----------------
 STT_FLUSH_TIMEOUT = 15.0  # 停止后等 STT 把尾段 final 冲出来的时间
 
 
-async def _run_stt(ws: WebSocket, info: SessionInfo) -> None:
+async def _run_stt(ws: WebSocket, info: SessionInfo, cap: float | None) -> None:
     settings = get_settings()
     store = get_store()
 
@@ -158,20 +175,31 @@ async def _run_stt(ws: WebSocket, info: SessionInfo) -> None:
     runner = make_stt_runner(info.source, settings)
     recv_task = asyncio.create_task(receive())
     stt_task = asyncio.create_task(runner(audio_queue, info.lecture_language, on_interim, on_final))
+    # 时长上限：到点视同客户端暂停，然后告诉前端是配额到了
+    limit_task = asyncio.create_task(asyncio.sleep(max(0.0, cap - t_offset))) if cap is not None else None
+    waiters = {recv_task, stt_task} | ({limit_task} if limit_task else set())
+    hit_limit = False
     try:
-        done, _ = await asyncio.wait({recv_task, stt_task}, return_when=asyncio.FIRST_COMPLETED)
+        done, _ = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
         if stt_task in done:
             # STT 先结束多半是出错（缺凭证 / 权限等）
             recv_task.cancel()
             if (exc := stt_task.exception()) is not None:
                 raise exc
             return
-        # 收流结束（暂停 / 断开）：等 STT 把尾部 final 冲出来再结束，不要立即 cancel
+        if limit_task in done:
+            hit_limit = True
+            recv_task.cancel()  # 其 finally 会往队列放 None 通知 STT 收尾
+        # 收流结束（暂停 / 断开 / 到上限）：等 STT 把尾部 final 冲出来再结束，不要立即 cancel
         try:
             await asyncio.wait_for(stt_task, timeout=STT_FLUSH_TIMEOUT)
         except asyncio.TimeoutError:
             stt_task.cancel()
+        if hit_limit:
+            await _send(ws, _limit_msg(cap))
     finally:
+        if limit_task is not None:
+            limit_task.cancel()
         if recorder is not None:
             rec = await asyncio.to_thread(recorder.close_blocking)
             if rec is not None:

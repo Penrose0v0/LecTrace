@@ -47,6 +47,17 @@ GEMINI_API_KEY=你的key
 3. 把 client id 填进 `.env` 的 `GOOGLE_CLIENT_ID`；再生成一个 `SESSION_SECRET`（`openssl rand -hex 32`）。
 4. 个人使用建议设 `ALLOWED_EMAILS=你的邮箱`，否则任何 Google 账号都能登录并消耗 LLM 额度。
 
+### 给别人用：配额
+
+把自己放进 `ADMIN_EMAILS`（不受限），其他登录用户默认受两条限制，都在 `.env` 里调，0 = 不限：
+
+- `QUOTA_MAX_LECTURE_MINUTES=60`：单节课转录时长上限，暂停再继续算同一节。到点服务端停止收音、
+  冲完尾段后发 `limit` 消息，前端进入暂停并提示；再按继续会立刻被拒。
+- `QUOTA_MAX_LECTURES_PER_DAY=3`：每天最多新建几节课，按 `QUOTA_TIMEZONE`（默认 Asia/Tokyo）的自然日，
+  超过时新建返回 429。登录响应里的 `quota` 字段给前端显示"今天 n/3 节"。
+
+本地开发用户在 `ADMIN_EMAILS` 为空时视为管理员；想本地测配额就随便填一个别的邮箱进去。
+
 > 数据归属：讲义（`sessions/{id}`）带 `user_id`，列表 / 详情 / WebSocket / Catch-up / 对话都校验归属。
 > 用户偏好存在 `users/{user_id}`。
 

@@ -12,6 +12,7 @@ from ..auth import (
     set_session_cookie,
     verify_google_credential,
 )
+from .. import quota
 from ..config import Settings, get_settings
 from ..deps import get_store, load_prefs
 from ..models import LANGS, GoogleLoginRequest, User, UserPrefs
@@ -20,7 +21,11 @@ router = APIRouter(prefix="/api", tags=["auth"])
 
 
 async def _login_payload(user: User, settings: Settings) -> dict:
-    return {"user": user.model_dump(), "prefs": (await load_prefs(user, settings)).model_dump()}
+    return {
+        "user": user.model_dump(),
+        "prefs": (await load_prefs(user, settings)).model_dump(),
+        "quota": await quota.status(get_store(), user, settings),
+    }
 
 
 @router.get("/auth/config")

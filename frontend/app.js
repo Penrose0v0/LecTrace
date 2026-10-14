@@ -38,6 +38,9 @@ const I18N = {
     save: "保存", saved: "保存しました", saveFailed: "保存に失敗しました",
     confirmInterrupt: "文字起こし中です。続けると現在の文字起こしは中断されます（あとで履歴から再開できます）。よろしいですか？",
     replayLabel: (f, m, n) => `${f} · ${m}分 / ${n}件`,
+    stLimit: (m) => `この講義は上限の ${m} 分に達しました`,
+    errQuotaDaily: (n) => `今日はもう ${n} 回講義を作成しました。また明日どうぞ。`,
+    quotaLine: (used, max, min) => `今日 ${used}/${max} 回 · 1回 ${min} 分まで`,
   },
   zh: {
     docTitle: "LecTrace", loginSub: "走神了？几秒钟追上进度。",
@@ -72,6 +75,9 @@ const I18N = {
     save: "保存", saved: "已保存", saveFailed: "保存失败",
     confirmInterrupt: "正在转录中，继续会中断当前转录（之后可以从历史里继续）。确定吗？",
     replayLabel: (f, m, n) => `${f} · ${m}分 / ${n}段`,
+    stLimit: (m) => `这节课已达到 ${m} 分钟上限`,
+    errQuotaDaily: (n) => `今天已经创建了 ${n} 节课，明天再来吧。`,
+    quotaLine: (used, max, min) => `今天 ${used}/${max} 节 · 每节最多 ${min} 分钟`,
   },
   en: {
     docTitle: "LecTrace", loginSub: "Zoned out? Catch up in seconds.",
@@ -106,6 +112,9 @@ const I18N = {
     save: "Save", saved: "Saved", saveFailed: "Save failed",
     confirmInterrupt: "Transcription is running. Continuing will interrupt it (you can resume from History later). Proceed?",
     replayLabel: (f, m, n) => `${f} · ${m} min / ${n} segs`,
+    stLimit: (m) => `This lecture reached the ${m}-minute limit`,
+    errQuotaDaily: (n) => `You've already created ${n} lectures today. Come back tomorrow.`,
+    quotaLine: (used, max, min) => `Today ${used}/${max} · up to ${min} min each`,
   },
 };
 
@@ -122,6 +131,7 @@ function applyI18n() {
   $("mDesc").placeholder = t("descPh");
   $("devLoginBtn").textContent = t("devLogin");
   renderAll();
+  if (state.user) renderProfile();
 }
 
 // ---------------- 通用 ----------------
@@ -166,9 +176,15 @@ async function api(path, opts = {}) {
   if (r.status === 401) { showLogin(); throw new Error("unauthorized"); }
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));
-    throw new Error(err.detail || `HTTP ${r.status}`);
+    throw new Error(errorText(err.detail) || `HTTP ${r.status}`);
   }
   return r;
+}
+// 后端结构化错误（{code, ...}）按界面语言翻译；普通字符串原样返回
+function errorText(detail) {
+  if (!detail || typeof detail !== "object") return detail;
+  if (detail.code === "quota_lectures_per_day") return t("errQuotaDaily")(detail.limit);
+  return detail.code || "";
 }
 const postJson = (path, body) => api(path, { method: "POST", body: JSON.stringify(body) });
 
@@ -206,6 +222,7 @@ async function parseSSE(body, handlers) {
 // =====================================================================
 const state = {
   user: null,
+  quota: null,            // 非管理员的配额 {max_lecture_minutes, max_lectures_per_day, lectures_today}
   prefs: { ui_language: "ja", lecture_language: "ja", window_minutes: 3, theme: "dark" },
   authConfig: { google_client_id: "", dev_login: false },
   view: "lecture",
@@ -231,7 +248,7 @@ async function boot() {
     fetch("/api/auth/me").then((r) => r.json()).catch(() => ({ user: null })),
   ]);
   state.authConfig = cfg;
-  if (me.user) enterApp(me.user, me.prefs);
+  if (me.user) enterApp(me.user, me.prefs, me.quota);
   else showLogin();
 }
 
@@ -266,7 +283,7 @@ async function onGoogleCredential(resp) {
   try {
     const r = await postJson("/api/auth/google", { credential: resp.credential });
     const d = await r.json();
-    enterApp(d.user, d.prefs);
+    enterApp(d.user, d.prefs, d.quota);
   } catch (e) {
     $("loginHint").textContent = t("loginFailed") + e.message;
   }
@@ -276,7 +293,7 @@ async function devLogin() {
   try {
     const r = await postJson("/api/auth/dev", {});
     const d = await r.json();
-    enterApp(d.user, d.prefs);
+    enterApp(d.user, d.prefs, d.quota);
   } catch (e) {
     $("loginHint").textContent = t("loginFailed") + e.message;
   }
@@ -290,8 +307,9 @@ async function logout() {
   location.reload();
 }
 
-function enterApp(user, prefs) {
+function enterApp(user, prefs, quota) {
   state.user = user;
+  state.quota = quota || null;
   state.prefs = { ...state.prefs, ...(prefs || {}) };
   uiLang = state.prefs.ui_language || "ja";
   document.documentElement.dataset.theme = state.prefs.theme || "dark";
@@ -311,6 +329,9 @@ function renderProfile() {
   $("profileAvatar").innerHTML = img;
   $("profileName").textContent = u.name || u.email;
   $("profileEmail").textContent = u.email;
+  const q = state.quota;
+  $("profileQuota").classList.toggle("hidden", !q);
+  if (q) $("profileQuota").textContent = t("quotaLine")(q.lectures_today, q.max_lectures_per_day ?? "∞", q.max_lecture_minutes ?? "∞");
 }
 
 async function loadDemoSessions() {
@@ -566,6 +587,7 @@ async function onRecClick() {
     try {
       const r = await postJson("/api/sessions", state.meta);
       state.session = await r.json();
+      if (state.quota) { state.quota.lectures_today++; renderProfile(); }
     } catch (e) {
       setStatus("stError", { param: e.message, err: true });
       $("recBtn").classList.remove("busy");
@@ -616,6 +638,10 @@ function onTranscriptMessage(ev) {
   } else if (msg.type === "end") {
     // 回放放完 / 服务端收尾：进入暂停态（随时可继续）
     if (state.transcribing) enterPaused();
+  } else if (msg.type === "limit") {
+    // 配额：这节课到时长上限了，停在暂停态并提示
+    enterPaused();
+    setStatus("stLimit", { param: msg.limit, err: true });
   } else if (msg.type === "error") {
     enterPaused();
     setStatus("stError", { param: msg.message, err: true });

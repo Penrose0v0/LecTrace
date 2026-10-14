@@ -6,6 +6,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from .. import quota
 from ..auth import current_user
 from ..config import Settings, get_settings
 from ..deps import get_store, owned_session
@@ -31,9 +32,12 @@ def demo_sessions(_: User = Depends(current_user), settings: Settings = Depends(
 
 
 @router.post("/sessions")
-async def create_session(meta: LectureMeta, user: User = Depends(current_user)) -> dict:
+async def create_session(
+    meta: LectureMeta, user: User = Depends(current_user), settings: Settings = Depends(get_settings)
+) -> dict:
     _validate(meta)
     store = get_store()
+    await quota.check_can_create_lecture(store, user, settings)
     session_id = uuid.uuid4().hex
     await store.create_session(session_id, {"user_id": user.id, **meta.model_dump()})
     info = await store.get_session(session_id)

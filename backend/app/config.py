@@ -74,6 +74,16 @@ class Settings:
     allowed_emails: frozenset[str] = frozenset(
         e.strip().lower() for e in os.getenv("ALLOWED_EMAILS", "").split(",") if e.strip()
     )
+
+    # ---- 配额（管理员不受限；本地开发用户视为管理员）----
+    admin_emails: frozenset[str] = frozenset(
+        e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()
+    )
+    # 单节课转录时长上限（分钟，0 = 不限）；暂停再继续算同一节
+    quota_max_lecture_minutes: int = int(os.getenv("QUOTA_MAX_LECTURE_MINUTES", "60"))
+    # 每天最多新建几节课（0 = 不限），按 quota_timezone 的自然日
+    quota_max_lectures_per_day: int = int(os.getenv("QUOTA_MAX_LECTURES_PER_DAY", "3"))
+    quota_timezone: str = os.getenv("QUOTA_TIMEZONE", "Asia/Tokyo")
     # 本地开发免 Google 登录：未配置 client id 且不在 Cloud Run 上时自动开启，
     # 也可用 AUTH_DEV_LOGIN=1/0 强制开/关
     _auth_dev_login_env: str = os.getenv("AUTH_DEV_LOGIN", "")
