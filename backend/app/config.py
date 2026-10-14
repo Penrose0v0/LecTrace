@@ -64,6 +64,10 @@ class Settings:
     session_secret: str = os.getenv("SESSION_SECRET", "")
     # 登录态有效期（天）
     session_days: int = int(os.getenv("SESSION_DAYS", "30"))
+    # 允许登录的邮箱白名单（逗号分隔，不区分大小写）；留空 = 任何 Google 账号都能登
+    allowed_emails: frozenset[str] = frozenset(
+        e.strip().lower() for e in os.getenv("ALLOWED_EMAILS", "").split(",") if e.strip()
+    )
     # 本地开发免 Google 登录：未配置 client id 且不在 Cloud Run 上时自动开启，
     # 也可用 AUTH_DEV_LOGIN=1/0 强制开/关
     _auth_dev_login_env: str = os.getenv("AUTH_DEV_LOGIN", "")

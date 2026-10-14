@@ -119,6 +119,9 @@ async def verify_google_credential(credential: str, settings: Settings) -> User:
         raise HTTPException(status_code=401, detail=f"Google 登录校验失败：{exc}") from exc
     if info.get("iss") not in ("accounts.google.com", "https://accounts.google.com"):
         raise HTTPException(status_code=401, detail="Google 登录校验失败：issuer 不合法。")
+    email = (info.get("email") or "").lower()
+    if settings.allowed_emails and (email not in settings.allowed_emails or not info.get("email_verified")):
+        raise HTTPException(status_code=403, detail="このアカウントは許可されていません。")
     return User(
         id=f"google:{info['sub']}",
         email=info.get("email", ""),

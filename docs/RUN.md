@@ -45,6 +45,7 @@ GEMINI_API_KEY=你的key
    - `https://lectrace-jngknpqwya-an.a.run.app`（Cloud Run）
    不需要 redirect URI（前端用的是 Google Identity Services 弹窗模式）。
 3. 把 client id 填进 `.env` 的 `GOOGLE_CLIENT_ID`；再生成一个 `SESSION_SECRET`（`openssl rand -hex 32`）。
+4. 个人使用建议设 `ALLOWED_EMAILS=你的邮箱`，否则任何 Google 账号都能登录并消耗 LLM 额度。
 
 > 数据归属：讲义（`sessions/{id}`）带 `user_id`，列表 / 详情 / WebSocket / Catch-up / 对话都校验归属。
 > 用户偏好存在 `users/{user_id}`。
