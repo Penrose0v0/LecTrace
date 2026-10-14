@@ -37,7 +37,13 @@ async def run_stt(
 
     队列收到 None 视为结束。会在 STREAM_RESTART_SEC 处自动重启流。
     """
-    client = speech.SpeechAsyncClient()
+    try:
+        client = speech.SpeechAsyncClient()
+    except Exception as exc:  # noqa: BLE001 - 本地多半是没配 ADC
+        raise RuntimeError(
+            "Google STT 需要 GCP 凭证：本地请先 `gcloud auth application-default login`，"
+            "或在课堂设置里把音频来源改成 OpenAI。"
+        ) from exc
     config = speech.RecognitionConfig(
         encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
         sample_rate_hertz=SAMPLE_RATE,
