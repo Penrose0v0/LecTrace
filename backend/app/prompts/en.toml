@@ -18,8 +18,8 @@ Below is the transcript of roughly the last {window_minutes} minutes of a lectur
 The student missed this part. Tell them, as briefly as possible, what is being discussed right now.
 
 Requirements:
-- 2–3 sentences only. No bullet points, headings or bold text
-- First sentence: the topic being discussed right now; the rest: how the lecture got there
+- One sentence, two at most. No bullet points, headings or bold text
+- Say what is being discussed right now; a second sentence, if any, gives the lead-up in a few words
 - No preamble, no self-reference
 - The lecture is in {lecture_language}, but write entirely in English with no {lecture_language} words mixed in:
   translate terms and everyday words alike; keep only names, product names and acronyms that have no translation
