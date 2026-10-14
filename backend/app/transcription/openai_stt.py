@@ -14,9 +14,12 @@ import array
 import asyncio
 import base64
 import json
+import logging
 from typing import Awaitable, Callable
 
 from websockets.asyncio.client import connect
+
+log = logging.getLogger("lectrace.stt")
 
 # OpenAI 用 ISO-639-1 语言码
 LANG_MAP = {"ja": "ja", "en": "en", "zh": "zh"}
@@ -68,7 +71,7 @@ async def run_stt(
 
     async with connect(REALTIME_URL, additional_headers=headers, max_size=None) as ws:
         await ws.send(json.dumps(session_update))
-        print(f"[stt] connected model={model} lang={lecture_lang}", flush=True)
+        log.info(f"[stt] connected model={model} lang={lecture_lang}")
         stopped = asyncio.Event()
         interim_buf = ""
         stats = {"bytes": 0, "chunks": 0, "delta": 0, "final": 0, "peak": 0}
@@ -113,10 +116,9 @@ async def run_stt(
                     if since_commit >= commit_every:
                         since_commit = 0
                         await ws.send(json.dumps({"type": "input_audio_buffer.commit"}))
-            print(
+            log.info(
                 f"[stt] audio sent chunks={stats['chunks']} bytes={stats['bytes']} "
-                f"peak={stats['peak']}/32767",
-                flush=True,
+                f"peak={stats['peak']}/32767"
             )
             stopped.set()
 
@@ -139,10 +141,10 @@ async def run_stt(
                         await on_final(text)
                 elif "error" in tp:
                     msg = (e.get("error") or {}).get("message", "OpenAI STT 错误")
-                    print(f"[stt] ERROR event: {e.get('error')}", flush=True)
+                    log.error(f"[stt] error event: {e.get('error')}")
                     raise RuntimeError(msg)
                 elif tp in ("session.created", "session.updated"):
-                    print(f"[stt] {tp}", flush=True)
+                    log.info(f"[stt] {tp}")
 
         send_task = asyncio.create_task(sender())
         read_task = asyncio.create_task(reader())
@@ -152,6 +154,6 @@ async def run_stt(
             await asyncio.wait_for(asyncio.shield(read_task), timeout=10.0)
         except asyncio.TimeoutError:
             pass
-        print(f"[stt] done delta={stats['delta']} final={stats['final']}", flush=True)
+        log.info(f"[stt] done delta={stats['delta']} final={stats['final']}")
         for tk in (read_task, send_task):
             tk.cancel()

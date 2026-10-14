@@ -107,9 +107,22 @@ gcloud run deploy lectrace \
 
 > 当前线上（2026-10 查看）还没有这两个变量，下次部署记得带上。
 
-## 三、从 demo 走向目标架构
+## 三、后端代码地图
 
-代码里两处已做成可插拔，接真实服务时**上层不用改**：
+```
+backend/app/
+├── main.py            装配路由 + 前端静态托管
+├── config.py          全部环境变量
+├── auth.py            Google ID token 校验、签名 cookie、current_user 依赖
+├── deps.py            store 单例、owned_session 依赖、SSE 小工具
+├── models.py          pydantic 数据结构（Segment / Card / LectureMeta / SessionInfo / Conversation / ...）
+├── prompts.py         ★ 所有 prompt 文本（Catch-up、对话 system、快捷指令）——改措辞只动这里
+├── ai.py              摘要 / 对话服务层：prompts → llm
+├── llm/               LLM_PROVIDER 可插拔：base（协议 + SSE 工具）/ openai / gemini
+├── store/             STORE_BACKEND 可插拔：base（协议）/ memory / firestore，含会话、段落、卡片、对话、偏好
+├── transcription/     replay / openai_stt / google_stt + make_stt_runner 工厂
+└── routes/            auth / lectures / ai（catchup + chat）/ transcribe（WebSocket）
+```
 
-- **转录源** `backend/app/transcription/`：现在是 `ReplaySource`。新增 `GoogleSTTSource`（前端经 WS 上行音频 → 后端代理 Speech-to-Text streaming），并把 `TRANSCRIPTION_SOURCE` 切到 `google-stt`。
-- **存储** `backend/app/store/` 与 `conversations.py`：内存 / Firestore 两套实现已就绪，`STORE_BACKEND` 切换。转录源仍待接 STT。
+想换 LLM：在 `llm/` 加一个 provider 类，`get_llm` 里注册。想换 STT：在 `transcription/` 加一个
+`run_stt(audio_queue, lang, on_interim, on_final)`，`make_stt_runner` 里注册。

@@ -1,19 +1,18 @@
-"""TranscriptStore 接口。
+"""Store 接口：讲义会话 / 转录段落 / Catch-up 卡片 / 对话线程 / 用户偏好。
 
-存储被做成 async 接口，便于 Firestore（AsyncClient）等真实后端无阻塞接入。
-内存实现里这些方法只是形式上 async。
+做成 async 接口，便于 Firestore（AsyncClient）无阻塞接入；内存实现里只是形式上 async。
 """
 
 from __future__ import annotations
 
 from typing import Protocol
 
-from ..models import Card, Segment, SessionInfo, UserPrefs
+from ..models import Card, Conversation, Segment, SessionInfo, UserPrefs
 
 
-class TranscriptStore(Protocol):
+class Store(Protocol):
     # ---- 会话（讲义）----
-    async def create_session(self, session_id: str, meta: dict | None = None) -> None: ...
+    async def create_session(self, session_id: str, meta: dict) -> None: ...
 
     async def get_session(self, session_id: str) -> SessionInfo | None:
         """会话元信息 + 统计；不存在返回 None。"""
@@ -42,14 +41,25 @@ class TranscriptStore(Protocol):
         """取 [start_t, end_t] 内的段落（含端点）。"""
         ...
 
-    # ---- Catchup 卡片 ----
+    # ---- Catch-up 卡片 ----
     async def add_card(self, session_id: str, card: Card) -> None: ...
 
     async def list_cards(self, session_id: str) -> list[Card]:
-        """按 index 升序返回该会话的所有卡片。"""
+        """按 index 升序。"""
         ...
 
     async def card_count(self, session_id: str) -> int: ...
+
+    # ---- 对话线程 ----
+    async def create_conversation(self, session_id: str, title: str, created_t: float) -> Conversation: ...
+
+    async def get_conversation(self, cid: str) -> Conversation | None: ...
+
+    async def list_conversations(self, session_id: str) -> list[Conversation]:
+        """按 created_t 降序。"""
+        ...
+
+    async def save_conversation(self, conv: Conversation) -> None: ...
 
     # ---- 用户偏好 ----
     async def get_prefs(self, user_id: str) -> UserPrefs | None: ...

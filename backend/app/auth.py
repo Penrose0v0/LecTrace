@@ -19,18 +19,12 @@ import secrets
 import time
 
 from fastapi import Depends, HTTPException, Request, Response, WebSocket
-from pydantic import BaseModel
 
 from .config import Settings, get_settings
+from .models import User
 
 COOKIE_NAME = "lt_session"
-
-
-class User(BaseModel):
-    id: str
-    email: str = ""
-    name: str = ""
-    picture: str = ""
+DEV_USER = User(id="dev:local", email="dev@localhost", name="Local Dev")
 
 
 # ---------------- cookie 签名 ----------------
@@ -75,24 +69,15 @@ def verify_session(token: str | None, settings: Settings) -> User | None:
         return None
     if payload.get("exp", 0) < time.time():
         return None
-    return User(
-        id=str(payload.get("id", "")),
-        email=payload.get("email", ""),
-        name=payload.get("name", ""),
-        picture=payload.get("picture", ""),
-    )
+    return User(**{k: payload.get(k, "") for k in User.model_fields})
 
 
 def set_session_cookie(resp: Response, request: Request, user: User, settings: Settings) -> None:
     secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
     resp.set_cookie(
-        COOKIE_NAME,
-        sign_session(user, settings),
+        COOKIE_NAME, sign_session(user, settings),
         max_age=settings.session_days * 86400,
-        httponly=True,
-        samesite="lax",
-        secure=secure,
-        path="/",
+        httponly=True, samesite="lax", secure=secure, path="/",
     )
 
 
@@ -109,9 +94,7 @@ async def verify_google_credential(credential: str, settings: Settings) -> User:
     from google.oauth2 import id_token
 
     def _verify() -> dict:
-        return id_token.verify_oauth2_token(
-            credential, google_requests.Request(), settings.google_client_id
-        )
+        return id_token.verify_oauth2_token(credential, google_requests.Request(), settings.google_client_id)
 
     try:
         info = await asyncio.to_thread(_verify)  # 同步 HTTP 取证书，放到线程里
@@ -124,13 +107,10 @@ async def verify_google_credential(credential: str, settings: Settings) -> User:
         raise HTTPException(status_code=403, detail="このアカウントは許可されていません。")
     return User(
         id=f"google:{info['sub']}",
-        email=info.get("email", ""),
-        name=info.get("name", "") or info.get("email", ""),
+        email=email,
+        name=info.get("name") or email,
         picture=info.get("picture", ""),
     )
-
-
-DEV_USER = User(id="dev:local", email="dev@localhost", name="Local Dev")
 
 
 # ---------------- FastAPI 依赖 ----------------
