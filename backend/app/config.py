@@ -16,10 +16,15 @@ load_dotenv(ROOT_DIR / ".env")
 
 class Settings:
     # ---- LLM 提供方（Catchup 摘要 + AI 对话）----
-    # openai（默认）或 gemini，可插拔切换
-    llm_provider: str = os.getenv("LLM_PROVIDER", "openai")
+    # siliconflow（默认）/ openai / gemini，可插拔切换
+    llm_provider: str = os.getenv("LLM_PROVIDER", "siliconflow")
 
-    # OpenAI（默认）
+    # SiliconFlow（默认；OpenAI 兼容协议）
+    siliconflow_api_key: str = os.getenv("SILICONFLOW_API_KEY", "")
+    siliconflow_model: str = os.getenv("SILICONFLOW_MODEL", "Qwen/Qwen3.5-122B-A10B")
+    siliconflow_base_url: str = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
+
+    # OpenAI（备选；实时转录 openai-stt 仍用这个 key）
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
     openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
@@ -101,13 +106,21 @@ class Settings:
 
     @property
     def llm_configured(self) -> bool:
-        if self.llm_provider == "openai":
-            return bool(self.openai_api_key)
-        return bool(self.gemini_api_key)
+        return bool(
+            {
+                "siliconflow": self.siliconflow_api_key,
+                "openai": self.openai_api_key,
+                "gemini": self.gemini_api_key,
+            }.get(self.llm_provider)
+        )
 
     @property
     def llm_model(self) -> str:
-        return self.openai_model if self.llm_provider == "openai" else self.gemini_model
+        return {
+            "siliconflow": self.siliconflow_model,
+            "openai": self.openai_model,
+            "gemini": self.gemini_model,
+        }.get(self.llm_provider, "")
 
 
 @lru_cache

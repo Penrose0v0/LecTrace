@@ -2,13 +2,15 @@
 
 ## 一、本地跑 demo
 
-### 1. 填 Gemini key
-在仓库根的 `.env` 里填上（从 https://aistudio.google.com/apikey 申请）：
+### 1. 填 LLM key
+在仓库根的 `.env` 里填上（SiliconFlow，从 https://cloud.siliconflow.cn 申请）：
 
 ```
-GEMINI_API_KEY=你的key
+SILICONFLOW_API_KEY=你的key
 ```
 
+默认模型 `Qwen/Qwen3.5-122B-A10B`，请求里固定 `enable_thinking=false`（不关的话每次先推理几千字，Catch-up 等不起）。
+OpenAI / Gemini 的实现还在（`LLM_PROVIDER=openai|gemini`），只是暂不使用；麦克风转录仍走 OpenAI，所以 `OPENAI_API_KEY` 要保留。
 其余默认值即可（`replay` 转录源 + 内存存储）。
 
 ### 2. 装依赖（venv 已就绪则可跳过）
@@ -124,7 +126,7 @@ gcloud run deploy lectrace \
   --source . \
   --region asia-northeast1 \
   --allow-unauthenticated \
-  --set-env-vars GEMINI_API_KEY=你的key,GEMINI_MODEL=gemini-2.5-flash
+  --set-env-vars SILICONFLOW_API_KEY=你的key,OPENAI_API_KEY=转录用的key
 ```
 
 `Dockerfile` 已把后端 + 前端 + 回放数据打进单容器，Cloud Run 注入的 `$PORT` 由 uvicorn 承接，WebSocket 长连接开箱可用。
