@@ -116,7 +116,8 @@ backend/app/
 ├── auth.py            Google ID token 校验、签名 cookie、current_user 依赖
 ├── deps.py            store 单例、owned_session 依赖、SSE 小工具
 ├── models.py          pydantic 数据结构（Segment / Card / LectureMeta / SessionInfo / Conversation / ...）
-├── prompts.py         ★ 所有 prompt 文本（Catch-up、对话 system、快捷指令）——改措辞只动这里
+├── prompts/           ★ 所有 prompt：ja.toml / zh.toml / en.toml 按用户语言各一份（key 相同），
+│                        __init__.py 只负责加载和填充。改措辞只改 toml；加语言就加一个文件
 ├── ai.py              摘要 / 对话服务层：prompts → llm
 ├── llm/               LLM_PROVIDER 可插拔：base（协议 + SSE 工具）/ openai / gemini
 ├── store/             STORE_BACKEND 可插拔：base（协议）/ memory / firestore，含会话、段落、卡片、对话、偏好
