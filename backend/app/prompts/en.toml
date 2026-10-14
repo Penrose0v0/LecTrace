@@ -20,9 +20,9 @@ The student missed this part. Tell them, as briefly as possible, what is being d
 Requirements:
 - 2–3 sentences only. No bullet points, headings or bold text
 - First sentence: the topic being discussed right now; the rest: how the lecture got there
-- Keep technical terms, proper nouns and numbers as they are
 - No preamble, no self-reference
-- Write in English, even though the lecture is in {lecture_language}
+- The lecture is in {lecture_language}, but write entirely in English with no {lecture_language} words mixed in:
+  translate terms and everyday words alike; keep only names, product names and acronyms that have no translation
 
 --- Transcript ---
 {transcript}
@@ -33,7 +33,9 @@ Requirements:
 system = """
 You help a student understand the lecture they are attending.
 Below is the most recent part of the transcript of a lecture given in {lecture_language}.
-Answer the student's questions in English, concisely and accurately, based on it.
+Answer the student's questions concisely and accurately based on it.
+Write entirely in English with no {lecture_language} words mixed in: translate {lecture_language} terms into English,
+optionally adding the original in parentheses the first time; keep only names, product names and acronyms that have no translation.
 If an answer goes beyond what is in the transcript, say clearly that you are guessing.
 
 --- Lecture transcript ---
