@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from ..models import Card, Conversation, Segment, SessionInfo, UserPrefs
+from ..models import Card, Conversation, Segment, SessionInfo, User, UserPrefs
 
 
 class Store(Protocol):
@@ -73,3 +73,33 @@ class Store(Protocol):
     async def get_prefs(self, user_id: str) -> UserPrefs | None: ...
 
     async def save_prefs(self, user_id: str, prefs: UserPrefs) -> None: ...
+
+    # ---- 用户资料 / 用量（见 usage.py）----
+    async def touch_user(self, user: User, *, login: bool) -> None:
+        """写入 / 刷新用户资料（email、name、picture），更新 last_seen_at；login=True 还加 login_count、
+        记 first_login_at / last_login_at。"""
+        ...
+
+    async def add_usage(self, user_id: str, day: str, fields: dict) -> None:
+        """把 fields 里的数值累加到用户累计 usage 和当日 usage（day = YYYY-MM-DD）。"""
+        ...
+
+    async def day_usage(self, user_id: str, day: str) -> dict:
+        """某用户某天的 usage；没有返回 {}。"""
+        ...
+
+    async def add_event(self, user_id: str, event: dict) -> None:
+        """追加一条用量明细（LLM 调用 / 转录连接）。"""
+        ...
+
+    async def list_users(self) -> list[dict]:
+        """全部用户资料 + 累计 usage（管理后台用），按 last_seen_at 降序。"""
+        ...
+
+    async def list_user_days(self, user_id: str, limit: int) -> list[dict]:
+        """某用户最近若干天的 usage（含 day 字段），按日期降序。"""
+        ...
+
+    async def list_user_events(self, user_id: str, limit: int) -> list[dict]:
+        """某用户最近若干条用量明细，按 ts 降序。"""
+        ...

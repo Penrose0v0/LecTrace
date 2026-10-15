@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import AsyncIterator
 
-from .base import Message, open_stream, sse_json_events
+from .base import LLMUsage, Message, open_stream, sse_json_events
 
 
 class OpenAICompatProvider:
@@ -33,12 +33,20 @@ class OpenAICompatProvider:
         self._thinking_extra = thinking_extra or {}
 
     async def stream(
-        self, messages: list[Message], *, max_tokens: int, temperature: float, thinking: bool = False
+        self,
+        messages: list[Message],
+        *,
+        max_tokens: int,
+        temperature: float,
+        thinking: bool = False,
+        usage: LLMUsage | None = None,
     ) -> AsyncIterator[str]:
         payload = {
             "model": self.model,
             "messages": messages,
             "stream": True,
+            # 让最后一个 chunk 带 usage（OpenAI / SiliconFlow 都支持；不支持的服务会忽略）
+            "stream_options": {"include_usage": True},
             "temperature": temperature,
             self._max_tokens_param: max_tokens,
             **(self._thinking_extra if thinking else self._extra),
@@ -46,6 +54,8 @@ class OpenAICompatProvider:
         headers = {"Authorization": f"Bearer {self._api_key}"}
         async with open_stream(self.name, "POST", self._url, headers=headers, json=payload) as resp:
             async for obj in sse_json_events(resp):
+                if usage is not None and (u := obj.get("usage")):
+                    usage.set(u.get("prompt_tokens"), u.get("completion_tokens"))
                 choices = obj.get("choices") or []
                 if not choices:
                     continue

@@ -11,6 +11,7 @@ const I18N = {
     loginHintDev: "GOOGLE_CLIENT_ID が未設定のため、ローカル開発用ログインを使っています。",
     loginFailed: "ログインに失敗しました：",
     navNew: "新しい講義", navHistory: "履歴", navProfile: "プロフィール", navSettings: "設定", logout: "サインアウト",
+    adminLink: "利用状況ダッシュボード",
     untitled: "無題の講義", lectureInfo: "講義情報",
     metaNote: "すべて任意。タイトルや説明は、AI が講義の文脈を理解する手がかりになります。",
     fLectureLang: "講義の言語", fUserLang: "あなたの言語",
@@ -47,7 +48,8 @@ const I18N = {
     noticeDaily: (n) => `今日はもう ${n} 回講義を作成しました（無料枠）。明日またどうぞ。`,
     stLimit: (m) => `この講義は上限の ${m} 分に達しました`,
     errQuotaDaily: (n) => `今日はもう ${n} 回講義を作成しました。また明日どうぞ。`,
-    quotaLine: (used, max, min) => `今日 ${used}/${max} 回 · 1回 ${min} 分まで`,
+    errQuotaChat: (n) => `今日の AI チャットは上限の ${n} 回に達しました（無料枠）。Catch-up は引き続き使えます。また明日どうぞ。`,
+    quotaLine: (used, max, min, cUsed, cMax) => `今日 ${used}/${max} 回 · 1回 ${min} 分まで · チャット ${cUsed}/${cMax}`,
   },
   zh: {
     docTitle: "LecTrace", loginSub: "走神了？几秒钟追上进度。",
@@ -55,6 +57,7 @@ const I18N = {
     loginHintDev: "未配置 GOOGLE_CLIENT_ID，当前使用本地开发登录。",
     loginFailed: "登录失败：",
     navNew: "新课堂", navHistory: "历史", navProfile: "我的", navSettings: "设置", logout: "退出登录",
+    adminLink: "用量后台",
     untitled: "未命名课堂", lectureInfo: "课堂信息",
     metaNote: "全部可选。标题和描述能帮助 AI 理解这节课的上下文。",
     fLectureLang: "讲义语言", fUserLang: "你的语言",
@@ -91,7 +94,8 @@ const I18N = {
     noticeDaily: (n) => `今天已经创建了 ${n} 节课（免费额度），明天再来吧。`,
     stLimit: (m) => `这节课已达到 ${m} 分钟上限`,
     errQuotaDaily: (n) => `今天已经创建了 ${n} 节课，明天再来吧。`,
-    quotaLine: (used, max, min) => `今天 ${used}/${max} 节 · 每节最多 ${min} 分钟`,
+    errQuotaChat: (n) => `今天的 AI 对话已达免费额度上限 ${n} 条。Catch-up 仍可继续使用，明天再来吧。`,
+    quotaLine: (used, max, min, cUsed, cMax) => `今天 ${used}/${max} 节 · 每节最多 ${min} 分钟 · 对话 ${cUsed}/${cMax}`,
   },
   en: {
     docTitle: "LecTrace", loginSub: "Zoned out? Catch up in seconds.",
@@ -99,6 +103,7 @@ const I18N = {
     loginHintDev: "GOOGLE_CLIENT_ID is not configured — using the local dev login.",
     loginFailed: "Sign-in failed: ",
     navNew: "New lecture", navHistory: "History", navProfile: "Profile", navSettings: "Settings", logout: "Sign out",
+    adminLink: "Usage dashboard",
     untitled: "Untitled lecture", lectureInfo: "Lecture info",
     metaNote: "Everything is optional. Title and description help the AI understand the lecture's context.",
     fLectureLang: "Lecture language", fUserLang: "Your language",
@@ -135,7 +140,8 @@ const I18N = {
     noticeDaily: (n) => `You've already created ${n} lectures today (free tier). Come back tomorrow.`,
     stLimit: (m) => `This lecture reached the ${m}-minute limit`,
     errQuotaDaily: (n) => `You've already created ${n} lectures today. Come back tomorrow.`,
-    quotaLine: (used, max, min) => `Today ${used}/${max} · up to ${min} min each`,
+    errQuotaChat: (n) => `You've reached today's free-tier limit of ${n} chat messages. Catch-up still works. Come back tomorrow.`,
+    quotaLine: (used, max, min, cUsed, cMax) => `Today ${used}/${max} · up to ${min} min each · chat ${cUsed}/${cMax}`,
   },
 };
 
@@ -223,6 +229,7 @@ async function api(path, opts = {}) {
 function errorText(detail) {
   if (!detail || typeof detail !== "object") return detail;
   if (detail.code === "quota_lectures_per_day") return t("errQuotaDaily")(detail.limit);
+  if (detail.code === "quota_chats_per_day") return t("errQuotaChat")(detail.limit);
   return detail.code || "";
 }
 const postJson = (path, body) => api(path, { method: "POST", body: JSON.stringify(body) });
@@ -286,7 +293,7 @@ function hideNotice() { $("notice").classList.add("hidden"); if (state.sheetOpen
 // =====================================================================
 const state = {
   user: null,
-  quota: null,            // 非管理员的配额 {max_lecture_minutes, max_lectures_per_day, lectures_today}
+  quota: null,            // 非管理员的配额 {max_lecture_minutes, max_lectures_per_day, lectures_today, max_chats_per_day, chats_today}
   prefs: { ui_language: "ja", lecture_language: "ja", window_minutes: 3, theme: "dark" },
   authConfig: { google_client_id: "", dev_login: false },
   view: "lecture",
@@ -429,8 +436,12 @@ function renderProfile() {
   $("profileName").textContent = u.name || u.email;
   $("profileEmail").textContent = u.email;
   const q = state.quota;
+  $("adminLink").classList.toggle("hidden", !!q);  // quota 为空 = 管理员，不受限
   $("profileQuota").classList.toggle("hidden", !q);
-  if (q) $("profileQuota").textContent = t("quotaLine")(q.lectures_today, q.max_lectures_per_day ?? "∞", q.max_lecture_minutes ?? "∞");
+  if (q) $("profileQuota").textContent = t("quotaLine")(
+    q.lectures_today, q.max_lectures_per_day ?? "∞", q.max_lecture_minutes ?? "∞",
+    q.chats_today ?? 0, q.max_chats_per_day ?? "∞",
+  );
 }
 
 async function loadDemoSessions() {
@@ -1158,10 +1169,15 @@ async function sendChat({ preset = null, message = "" } = {}) {
       },
       text: (txt) => { acc += txt; setBody(div, acc); },
       error: (p) => setBody(div, t("failed") + p.message, { error: true }),
-      done: () => setBody(div, acc, { done: true }),
+      done: () => {
+        setBody(div, acc, { done: true });
+        if (state.quota) { state.quota.chats_today = (state.quota.chats_today || 0) + 1; renderProfile(); }
+      },
     });
   } catch (e) {
-    setBody(div, t("failed") + e.message, { error: true });
+    // 配额用完：不是故障，直接给提示文案，不加"失败："前缀
+    if (e.quota === "quota_chats_per_day") setBody(div, e.message, { error: true });
+    else setBody(div, t("failed") + e.message, { error: true });
   } finally {
     setBusy(false);
   }

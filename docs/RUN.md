@@ -63,11 +63,31 @@ OpenAI / Gemini 的实现还在（`LLM_PROVIDER=openai|gemini`），只是暂不
   冲完尾段后发 `limit` 消息，前端进入暂停并提示；再按继续会立刻被拒。
 - `QUOTA_MAX_LECTURES_PER_DAY=3`：每天最多新建几节课，按 `QUOTA_TIMEZONE`（默认 Asia/Tokyo）的自然日，
   超过时新建返回 429。登录响应里的 `quota` 字段给前端显示"今天 n/3 节"。
+- `QUOTA_MAX_CHATS_PER_DAY=30`：每天最多发几条 AI 对话（只数成功回复的；LLM 报错那次不算）。超过时
+  `/api/chat` 返回 429 `quota_chats_per_day`，前端在气泡里提示。Catch-up 不计入：每次只有 160 token 输出，
+  而对话每次要把整节课转录（最多 4 万字）塞进上下文，是 LLM 开销的大头。默认 30 是占位值，按预算调。
 
 本地开发用户在 `ADMIN_EMAILS` 为空时视为管理员；想本地测配额就随便填一个别的邮箱进去。
 
 > 数据归属：讲义（`sessions/{id}`）带 `user_id`，列表 / 详情 / WebSocket / Catch-up / 对话都校验归属。
 > 用户偏好存在 `users/{user_id}`。
+
+### 看每个人用了多少：用量后台
+
+管理员登录后，头像菜单里有「用量后台」，或直接开 `/admin.html`（同一个登录 cookie，非管理员 403）。
+每个用户一行：首次登录、最近活跃、登录次数、课堂数、转录时长、Catch-up / 对话次数、LLM 输入 / 输出 token、
+估算成本；点一行展开最近 30 天的每日数字和最近 40 条明细（每次 LLM 调用的 token、每段转录连接的秒数）。
+
+数据怎么来的（`backend/app/usage.py`）：
+
+- 登录 / 刷新页面 → `users/{uid}` 写入 email、name、picture、`last_seen_at`；真正登录还加 `login_count`、`first/last_login_at`。
+- 转录 WebSocket 断开 → 本次收音秒数累加到 `stt_seconds`（暂停期间不连，不算；回放来源不走 STT，不记）。
+- 每次 Catch-up / 对话成功 → 从流式响应末尾取 `usage`（OpenAI 协议加了 `stream_options.include_usage`；Gemini 读 `usageMetadata`）累加 token。
+- 累计写在 `users/{uid}.usage`，当日写在 `users/{uid}/days/{YYYY-MM-DD}`（对话配额就从这里数），明细在 `users/{uid}/events`。
+
+成本估算只是乘单价：`LLM_PRICE_INPUT_PER_M` / `LLM_PRICE_OUTPUT_PER_M`（每百万 token）、`STT_PRICE_PER_MIN`
+（Google STT v1 标准模型约 0.024 USD/分），货币标签 `COST_CURRENCY`。LLM 单价默认 0，换模型后记得改；
+真实账单以 GCP / SiliconFlow 控制台为准，这里只能分到人头做参考。
 
 ## 一·五、启用 Firestore 持久化（可选）
 

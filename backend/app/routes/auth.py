@@ -12,7 +12,7 @@ from ..auth import (
     set_session_cookie,
     verify_google_credential,
 )
-from .. import quota
+from .. import quota, usage
 from ..config import Settings, get_settings
 from ..deps import get_store, load_prefs
 from ..models import LANGS, GoogleLoginRequest, User, UserPrefs
@@ -20,8 +20,9 @@ from ..models import LANGS, GoogleLoginRequest, User, UserPrefs
 router = APIRouter(prefix="/api", tags=["auth"])
 
 
-async def _login_payload(user: User, settings: Settings) -> dict:
+async def _login_payload(user: User, settings: Settings, *, login: bool) -> dict:
     store = get_store()
+    await usage.record_login(store, user, settings, login=login)
     saved = await store.get_prefs(user.id)
     return {
         "user": user.model_dump(),
@@ -45,7 +46,7 @@ async def auth_google(
 ) -> dict:
     user = await verify_google_credential(req.credential, settings)
     set_session_cookie(response, request, user, settings)
-    return await _login_payload(user, settings)
+    return await _login_payload(user, settings, login=True)
 
 
 @router.post("/auth/dev")
@@ -55,7 +56,7 @@ async def auth_dev(
     if not settings.auth_dev_login:
         raise HTTPException(status_code=403, detail="本地开发登录未开启。")
     set_session_cookie(response, request, DEV_USER, settings)
-    return await _login_payload(DEV_USER, settings)
+    return await _login_payload(DEV_USER, settings, login=True)
 
 
 @router.post("/auth/logout")
@@ -70,7 +71,7 @@ async def auth_me(
 ) -> dict:
     if user is None:
         return {"user": None}
-    return await _login_payload(user, settings)
+    return await _login_payload(user, settings, login=False)  # 刷新页面：只更新 last_seen
 
 
 @router.put("/me/prefs")

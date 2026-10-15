@@ -103,7 +103,19 @@ class Settings:
     quota_max_lecture_minutes: int = int(os.getenv("QUOTA_MAX_LECTURE_MINUTES", "105"))
     # 每天最多新建几节课（0 = 不限），按 quota_timezone 的自然日
     quota_max_lectures_per_day: int = int(os.getenv("QUOTA_MAX_LECTURES_PER_DAY", "3"))
+    # 每天最多发几条 AI 对话（0 = 不限）。Catch-up 不计：每次只有 160 token 输出，且已被课时上限约束。
+    # 对话一次要带整节课转录（最多 4 万字）进上下文，是 LLM 开销的大头。默认值是占位，按预算调
+    quota_max_chats_per_day: int = int(os.getenv("QUOTA_MAX_CHATS_PER_DAY", "30"))
     quota_timezone: str = os.getenv("QUOTA_TIMEZONE", "Asia/Tokyo")
+
+    # ---- 成本估算（后台用量页显示；0 = 不估算，只记 token / 秒数）----
+    # LLM 单价：每百万 token（输入 / 输出），按 LLM_PROVIDER 当前模型填
+    llm_price_input_per_m: float = float(os.getenv("LLM_PRICE_INPUT_PER_M", "0"))
+    llm_price_output_per_m: float = float(os.getenv("LLM_PRICE_OUTPUT_PER_M", "0"))
+    # 语音转录单价：每分钟。Google STT v1 标准模型约 0.024 USD/分
+    stt_price_per_min: float = float(os.getenv("STT_PRICE_PER_MIN", "0.024"))
+    # 只是显示用的货币标签，所有单价得用同一种货币
+    cost_currency: str = os.getenv("COST_CURRENCY", "USD")
     # 本地开发免 Google 登录：未配置 client id 且不在 Cloud Run 上时自动开启，
     # 也可用 AUTH_DEV_LOGIN=1/0 强制开/关
     _auth_dev_login_env: str = os.getenv("AUTH_DEV_LOGIN", "")

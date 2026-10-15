@@ -5,11 +5,29 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import AsyncIterator, Protocol
 
 import httpx
 
 Message = dict  # {"role": "system"|"user"|"assistant", "content": str}
+
+
+@dataclass
+class LLMUsage:
+    """一次调用的 token 用量。调用方建一个传给 stream()，流结束后读；提供方拿不到就保持 0。
+
+    output_tokens 含思考 token（各家都把它算进输出计费）。
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    def set(self, input_tokens: int | None, output_tokens: int | None) -> None:
+        if input_tokens:
+            self.input_tokens = int(input_tokens)
+        if output_tokens:
+            self.output_tokens = int(output_tokens)
 
 # 流式请求的超时：connect 短，read 是「两个 chunk 之间」的间隔（开思考时首 token 会晚一些）
 STREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=10.0)
@@ -29,12 +47,19 @@ class LLMProvider(Protocol):
     model: str
 
     def stream(
-        self, messages: list[Message], *, max_tokens: int, temperature: float, thinking: bool = False
+        self,
+        messages: list[Message],
+        *,
+        max_tokens: int,
+        temperature: float,
+        thinking: bool = False,
+        usage: LLMUsage | None = None,
     ) -> AsyncIterator[str]:
         """按 messages 生成，逐块 yield 文本。出错抛 LLMError。
 
         thinking=True 允许模型先推理再作答（对话用；Catch-up 要秒回，不开）。
         各提供方自己决定预算，不支持就忽略。
+        usage 给了的话，流结束前把 token 用量填进去（用于按用户计费统计）。
         """
         ...
 

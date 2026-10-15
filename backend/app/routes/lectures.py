@@ -7,7 +7,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from .. import quota
+from .. import quota, usage
 from ..auth import current_user
 from ..config import Settings, get_settings
 from ..deps import get_store, owned_session
@@ -42,6 +42,7 @@ async def create_session(
     await quota.check_can_create_lecture(store, user, settings)
     session_id = uuid.uuid4().hex
     await store.create_session(session_id, {"user_id": user.id, **meta.model_dump()})
+    await usage.record_lecture(store, user, settings, session_id)
     info = await store.get_session(session_id)
     return info.model_dump() if info else {"id": session_id}
 

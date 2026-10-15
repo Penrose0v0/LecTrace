@@ -6,16 +6,18 @@ SSE 事件：meta → 多个默认 message（{"text": 片段}）→ done / error
 
 from __future__ import annotations
 
+import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
+from .. import quota, usage
 from ..ai import chat_stream, summarize_stream
 from ..auth import current_user
 from ..config import Settings, get_settings
 from ..deps import SSE_HEADERS, get_store, sse
-from ..llm import LLMError
+from ..llm import LLMError, LLMUsage
 from ..models import Card, CatchupRequest, ChatRequest, Conversation, SessionInfo, User
 from ..prompts import format_transcript, preset_message
 
@@ -86,9 +88,9 @@ async def catchup(
             "model": settings.llm_model,
             "conversation_id": conv.id, "conversation_title": conv.title,
         })
-        acc = ""
+        acc, used, t0 = "", LLMUsage(), time.monotonic()
         try:
-            async for chunk in summarize_stream(segs, window_minutes, info, settings):
+            async for chunk in summarize_stream(segs, window_minutes, info, settings, usage=used):
                 acc += chunk
                 yield sse(None, {"text": chunk})
         except LLMError as exc:
@@ -102,6 +104,7 @@ async def catchup(
             "covered_from": start_t, "covered_to": now_t, "segment_count": len(segs),
         })
         await store.save_conversation(conv)
+        await usage.record_llm(store, user, settings, info.id, "catchup", used, time.monotonic() - t0)
         yield sse("done", {})
 
     return StreamingResponse(gen(), media_type="text/event-stream", headers=SSE_HEADERS)
@@ -128,6 +131,7 @@ async def chat(
     store = get_store()
     info = await _owned(req.session_id, user)
     _require_llm(settings)
+    await quota.check_can_chat(store, user, settings)
     message = req.message.strip()
     if req.preset:
         message = preset_message(req.preset, info.user_language) or ""
@@ -142,16 +146,17 @@ async def chat(
 
     async def gen():
         yield sse("meta", {"conversation_id": conv.id, "title": conv.title, "user_message": message})
-        acc = ""
+        acc, used, t0 = "", LLMUsage(), time.monotonic()
         try:
-            async for chunk in chat_stream(conv.messages, transcript, now_t, info, settings):
+            async for chunk in chat_stream(conv.messages, transcript, now_t, info, settings, usage=used):
                 acc += chunk
                 yield sse(None, {"text": chunk})
         except LLMError as exc:
-            yield sse("error", {"message": str(exc)})  # 失败不持久化这一轮
+            yield sse("error", {"message": str(exc)})  # 失败不持久化这一轮，也不计入当日配额
             return
         conv.messages.append({"role": "assistant", "content": acc, "t": now_t})
         await store.save_conversation(conv)
+        await usage.record_llm(store, user, settings, info.id, "chat", used, time.monotonic() - t0)
         yield sse("done", {})
 
     return StreamingResponse(gen(), media_type="text/event-stream", headers=SSE_HEADERS)

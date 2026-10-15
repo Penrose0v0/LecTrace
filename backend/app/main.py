@@ -5,7 +5,9 @@
   routes/lectures.py    讲义（session）增查改、归档列表、卡片与线程列表
   routes/ai.py          Catch-up 摘要、对话（SSE）
   routes/transcribe.py  转录 WebSocket（麦克风代理 STT / 回放）
-业务层：ai.py（prompt → llm）、prompts.py（所有 prompt）、store/（存储）、transcription/（转录源）。
+  routes/admin.py       管理后台：按用户的用量 / 成本（仅 ADMIN_EMAILS；页面 frontend/admin.html）
+业务层：ai.py（prompt → llm）、prompts.py（所有 prompt）、store/（存储）、transcription/（转录源）、
+quota.py（免费配额）、usage.py（按用户记用量）。
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
-from .routes import ai, auth, lectures, transcribe
+from .routes import admin, ai, auth, lectures, transcribe
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
@@ -29,6 +31,7 @@ app.include_router(auth.router)
 app.include_router(lectures.router)
 app.include_router(ai.router)
 app.include_router(transcribe.router)
+app.include_router(admin.router)
 
 
 @app.get("/api/health")

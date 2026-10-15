@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 import uuid
 
-from ..models import Card, Conversation, Segment, SessionInfo, UserPrefs
+from ..models import Card, Conversation, Segment, SessionInfo, User, UserPrefs
 
 
 class MemoryStore:
@@ -15,6 +15,9 @@ class MemoryStore:
         self._cards: dict[str, list[Card]] = {}
         self._convs: dict[str, Conversation] = {}
         self._prefs: dict[str, UserPrefs] = {}
+        self._users: dict[str, dict] = {}  # uid -> 资料 + usage
+        self._days: dict[str, dict[str, dict]] = {}  # uid -> day -> usage
+        self._events: dict[str, list[dict]] = {}
 
     # ---- 会话 ----
     async def create_session(self, session_id: str, meta: dict) -> None:
@@ -108,3 +111,39 @@ class MemoryStore:
 
     async def save_prefs(self, user_id: str, prefs: UserPrefs) -> None:
         self._prefs[user_id] = prefs
+
+    # ---- 用户资料 / 用量 ----
+    async def touch_user(self, user: User, *, login: bool) -> None:
+        now = time.time()
+        u = self._users.setdefault(user.id, {"id": user.id, "login_count": 0, "usage": {}})
+        u.update(email=user.email, name=user.name, picture=user.picture, last_seen_at=now)
+        if login:
+            u.setdefault("first_login_at", now)
+            u["last_login_at"] = now
+            u["login_count"] += 1
+
+    async def add_usage(self, user_id: str, day: str, fields: dict) -> None:
+        u = self._users.setdefault(user_id, {"id": user_id, "login_count": 0, "usage": {}})
+        d = self._days.setdefault(user_id, {}).setdefault(day, {})
+        for k, v in fields.items():
+            u["usage"][k] = u["usage"].get(k, 0) + v
+            d[k] = d.get(k, 0) + v
+
+    async def day_usage(self, user_id: str, day: str) -> dict:
+        return dict(self._days.get(user_id, {}).get(day, {}))
+
+    async def add_event(self, user_id: str, event: dict) -> None:
+        self._events.setdefault(user_id, []).append(dict(event))
+
+    async def list_users(self) -> list[dict]:
+        out = [dict(u, usage=dict(u.get("usage", {}))) for u in self._users.values()]
+        out.sort(key=lambda u: u.get("last_seen_at", 0), reverse=True)
+        return out
+
+    async def list_user_days(self, user_id: str, limit: int) -> list[dict]:
+        days = self._days.get(user_id, {})
+        return [{"day": d, **days[d]} for d in sorted(days, reverse=True)[:limit]]
+
+    async def list_user_events(self, user_id: str, limit: int) -> list[dict]:
+        evs = sorted(self._events.get(user_id, []), key=lambda e: e.get("ts", 0), reverse=True)
+        return [dict(e) for e in evs[:limit]]

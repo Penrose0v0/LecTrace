@@ -7,7 +7,10 @@
     ├─ segments/{seq}   {seq, text, t}
     └─ cards/{card_id}  Card 字段
   conversations/{id}    {session_id, title, created_t, messages: [...]}
-  users/{user_id}       UserPrefs 字段
+  users/{user_id}       UserPrefs 字段 + 资料（email, name, picture, first/last_login_at, last_seen_at,
+    │                   login_count）+ usage: {累计用量，见 usage.py}
+    ├─ days/{YYYY-MM-DD}  当日用量（同一组字段）
+    └─ events/{id}        用量明细 {ts, kind, ...}
 
 用 AsyncClient，全程 await。设置 FIRESTORE_EMULATOR_HOST 即连模拟器。
 按 user_id / session_id 的列表查询都只过滤、在内存里排序，避免 Firestore 组合索引。
@@ -20,7 +23,11 @@ import uuid
 
 from google.cloud import firestore
 
-from ..models import Card, Conversation, Segment, SessionInfo, UserPrefs
+from ..models import Card, Conversation, Segment, SessionInfo, User, UserPrefs
+
+USER_PROFILE_FIELDS = (
+    "email", "name", "picture", "first_login_at", "last_login_at", "last_seen_at", "login_count",
+)
 
 
 class FirestoreStore:
@@ -174,3 +181,58 @@ class FirestoreStore:
 
     async def save_prefs(self, user_id: str, prefs: UserPrefs) -> None:
         await self._db.collection("users").document(user_id).set(prefs.model_dump(), merge=True)
+
+    # ---- 用户资料 / 用量 ----
+    def _user(self, user_id: str):
+        return self._db.collection("users").document(user_id)
+
+    async def touch_user(self, user: User, *, login: bool) -> None:
+        now = time.time()
+        data: dict = {"email": user.email, "name": user.name, "picture": user.picture, "last_seen_at": now}
+        if login:
+            data.update(last_login_at=now, login_count=firestore.Increment(1))
+            # first_login_at 只在没有时写：merge 不支持“缺省才写”，先读一下
+            snap = await self._user(user.id).get()
+            if not snap.exists or "first_login_at" not in (snap.to_dict() or {}):
+                data["first_login_at"] = now
+        await self._user(user.id).set(data, merge=True)
+
+    async def add_usage(self, user_id: str, day: str, fields: dict) -> None:
+        inc = {k: firestore.Increment(v) for k, v in fields.items()}
+        batch = self._db.batch()
+        batch.set(self._user(user_id), {"usage": inc, "usage_updated_at": time.time()}, merge=True)
+        batch.set(self._user(user_id).collection("days").document(day), {"day": day, **inc}, merge=True)
+        await batch.commit()
+
+    async def day_usage(self, user_id: str, day: str) -> dict:
+        snap = await self._user(user_id).collection("days").document(day).get()
+        return (snap.to_dict() or {}) if snap.exists else {}
+
+    async def add_event(self, user_id: str, event: dict) -> None:
+        await self._user(user_id).collection("events").document(uuid.uuid4().hex).set(event)
+
+    async def list_users(self) -> list[dict]:
+        out = []
+        async for snap in self._db.collection("users").stream():
+            d = snap.to_dict() or {}
+            u = {k: d.get(k) for k in USER_PROFILE_FIELDS}
+            out.append({"id": snap.id, **u, "usage": d.get("usage") or {}})
+        out.sort(key=lambda u: u.get("last_seen_at") or 0, reverse=True)
+        return out
+
+    async def list_user_days(self, user_id: str, limit: int) -> list[dict]:
+        # 文档 id 就是日期，按 id 倒序即按日期倒序，不需要索引
+        q = (
+            self._user(user_id).collection("days")
+            .order_by("__name__", direction=firestore.Query.DESCENDING)
+            .limit(limit)
+        )
+        return [{"day": snap.id, **(snap.to_dict() or {})} async for snap in q.stream()]
+
+    async def list_user_events(self, user_id: str, limit: int) -> list[dict]:
+        q = (
+            self._user(user_id).collection("events")
+            .order_by("ts", direction=firestore.Query.DESCENDING)
+            .limit(limit)
+        )
+        return [snap.to_dict() or {} async for snap in q.stream()]

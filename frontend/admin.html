@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LecTrace · 用量后台</title>
+  <style>
+    /* 与主界面同一套 token（styles.css），这里只复制用到的几项，页面独立可开 */
+    :root {
+      --bg: #0a0a0c; --bg-2: #121215; --bg-3: #1b1b20; --bg-4: #24242b;
+      --line: #232329; --line-strong: #3a3a44;
+      --text: #ededf0; --text-2: #a6a6b0; --muted: #6c6c78;
+      --ok: #34d399; --warn: #f5a524; --err: #ff6b6b;
+      --radius: 12px;
+      --font: "Inter", -apple-system, "Hiragino Sans", "Noto Sans JP", "Segoe UI", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px 16px 48px; background: var(--bg); color: var(--text); font: 13px/1.5 var(--font); -webkit-font-smoothing: antialiased; }
+    .wrap { max-width: 1240px; margin: 0 auto; }
+    h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+    h2 { font-size: 14px; font-weight: 600; margin: 28px 0 10px; }
+    .sub { color: var(--muted); font-size: 12px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin: 18px 0 8px; }
+    .card { background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
+    .card .k { color: var(--muted); font-size: 11px; }
+    .card .v { font-size: 20px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+    .card .d { color: var(--text-2); font-size: 11px; margin-top: 2px; }
+    .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-2); }
+    table { border-collapse: collapse; width: 100%; min-width: 900px; font-variant-numeric: tabular-nums; }
+    th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--line); white-space: nowrap; }
+    th { color: var(--muted); font-weight: 500; font-size: 11px; position: sticky; top: 0; background: var(--bg-2); cursor: pointer; user-select: none; }
+    th:first-child, td:first-child { text-align: left; }
+    th.sorted { color: var(--text); }
+    tbody tr { cursor: pointer; }
+    tbody tr:hover { background: var(--bg-3); }
+    tbody tr.open { background: var(--bg-4); }
+    tr.detail td { padding: 0; background: var(--bg); cursor: default; }
+    tr.detail:hover { background: var(--bg); }
+    .who { display: flex; align-items: center; gap: 10px; }
+    .who img, .who .ph { width: 26px; height: 26px; border-radius: 50%; background: var(--bg-4); flex: none; }
+    .who .n { font-weight: 500; }
+    .who .e { color: var(--muted); font-size: 11px; }
+    .tag { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--text-2); margin-left: 6px; vertical-align: middle; }
+    .dim { color: var(--muted); }
+    .detail-inner { padding: 12px 14px 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 900px) { .detail-inner { grid-template-columns: 1fr; } }
+    .detail-inner h3 { margin: 0 0 6px; font-size: 12px; color: var(--muted); font-weight: 500; }
+    .detail-inner table { min-width: 0; font-size: 12px; }
+    .detail-inner th { position: static; cursor: default; }
+    .err { color: var(--err); }
+    .toolbar { display: flex; gap: 12px; align-items: center; margin: 18px 0 10px; flex-wrap: wrap; }
+    .toolbar input { background: var(--bg-3); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 6px 10px; font: inherit; min-width: 220px; }
+    .toolbar button { background: var(--bg-3); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer; }
+    .toolbar button:hover { background: var(--bg-4); }
+    a { color: var(--text-2); }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>LecTrace · 用量后台</h1>
+  <div class="sub" id="meta">加载中…</div>
+  <div id="error" class="err"></div>
+
+  <div class="cards" id="cards"></div>
+
+  <div class="toolbar">
+    <input id="filter" type="search" placeholder="按邮箱 / 名字过滤">
+    <button id="reload">刷新</button>
+    <span class="sub">点表头排序，点一行看每日明细。时长 = 实际收音秒数累计；成本按 .env 单价估算。</span>
+  </div>
+
+  <div class="tablewrap">
+    <table id="tbl">
+      <thead><tr id="head"></tr></thead>
+      <tbody id="body"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let data = null;
+let sortKey = "last_seen_at", sortDesc = true, openId = null;
+
+const COLS = [
+  { key: "name", label: "用户", get: (u) => (u.name || u.email || u.id).toLowerCase(), render: renderWho },
+  { key: "last_seen_at", label: "最近活跃", get: (u) => u.last_seen_at || 0, render: (u) => ago(u.last_seen_at) },
+  { key: "first_login_at", label: "首次登录", get: (u) => u.first_login_at || 0, render: (u) => date(u.first_login_at) },
+  { key: "login_count", label: "登录", get: (u) => u.login_count || 0, render: (u) => num(u.login_count) },
+  { key: "lectures", label: "课堂", get: (u) => u.usage.lectures, render: (u) => num(u.usage.lectures) },
+  { key: "stt_seconds", label: "转录", get: (u) => u.usage.stt_seconds, render: (u) => dur(u.usage.stt_seconds) },
+  { key: "catchups", label: "Catch-up", get: (u) => u.usage.catchups, render: (u) => num(u.usage.catchups) },
+  { key: "chats", label: "对话", get: (u) => u.usage.chats, render: (u) => num(u.usage.chats) },
+  { key: "llm_in_tokens", label: "输入 tok", get: (u) => u.usage.llm_in_tokens, render: (u) => tok(u.usage.llm_in_tokens) },
+  { key: "llm_out_tokens", label: "输出 tok", get: (u) => u.usage.llm_out_tokens, render: (u) => tok(u.usage.llm_out_tokens) },
+  { key: "cost", label: "估算成本", get: (u) => u.usage.llm_cost + u.usage.stt_cost,
+    render: (u) => money(u.usage.llm_cost + u.usage.stt_cost) + ` <span class="dim">(${money(u.usage.stt_cost)} + ${money(u.usage.llm_cost)})</span>` },
+];
+
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function num(n) { return n ? Math.round(n).toLocaleString() : '<span class="dim">0</span>'; }
+function tok(n) { if (!n) return '<span class="dim">0</span>'; return n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n); }
+function dur(sec) {
+  if (!sec) return '<span class="dim">0</span>';
+  const m = Math.round(sec / 60);
+  return m >= 60 ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m` : `${m}m`;
+}
+function money(x) {
+  if (!data) return "";
+  const cur = data.currency || "";
+  if (!x) return `<span class="dim">0 ${cur}</span>`;
+  return `${x < 0.01 ? x.toFixed(4) : x.toFixed(2)} ${cur}`;
+}
+function date(ts) { return ts ? new Date(ts * 1000).toLocaleDateString() : '<span class="dim">—</span>'; }
+function ago(ts) {
+  if (!ts) return '<span class="dim">—</span>';
+  const s = Date.now() / 1000 - ts;
+  if (s < 60) return "刚刚";
+  if (s < 3600) return `${Math.floor(s / 60)} 分钟前`;
+  if (s < 86400) return `${Math.floor(s / 3600)} 小时前`;
+  if (s < 86400 * 30) return `${Math.floor(s / 86400)} 天前`;
+  return new Date(ts * 1000).toLocaleDateString();
+}
+function renderWho(u) {
+  const img = u.picture ? `<img src="${esc(u.picture)}" alt="" referrerpolicy="no-referrer">` : `<span class="ph"></span>`;
+  return `<div class="who">${img}<div><div class="n">${esc(u.name || "(无名)")}${u.is_admin ? '<span class="tag">admin</span>' : ""}</div><div class="e">${esc(u.email || u.id)}</div></div></div>`;
+}
+
+async function load() {
+  $("error").textContent = "";
+  try {
+    const r = await fetch("/api/admin/users");
+    if (r.status === 401) { $("error").innerHTML = '未登录。请先在 <a href="/">主界面</a> 登录管理员账号。'; return; }
+    if (r.status === 403) { $("error").textContent = "当前账号不是管理员（ADMIN_EMAILS）。"; return; }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    data = await r.json();
+    render();
+  } catch (e) {
+    $("error").textContent = "加载失败：" + e.message;
+  }
+}
+
+function render() {
+  const t = data.totals, p = data.pricing, q = data.quota;
+  $("meta").textContent =
+    `${data.users.length} 个用户 · 今天 ${data.today} · 模型 ${p.llm_model || "?"} · ` +
+    `单价 输入 ${p.llm_input_per_m}/M · 输出 ${p.llm_output_per_m}/M · 转录 ${p.stt_per_min}/分 (${data.currency}) · ` +
+    `免费配额 ${q.max_lecture_minutes ?? "∞"} 分/节 · ${q.max_lectures_per_day ?? "∞"} 节/天 · ${q.max_chats_per_day ?? "∞"} 条对话/天`;
+  const active = data.users.filter((u) => (u.last_seen_at || 0) > Date.now() / 1000 - 7 * 86400).length;
+  $("cards").innerHTML = [
+    ["用户", data.users.length, `${active} 人 7 天内活跃`],
+    ["课堂", num(t.lectures), ""],
+    ["转录时长", dur(t.stt_seconds), money(t.stt_cost)],
+    ["Catch-up", num(t.catchups), ""],
+    ["对话", num(t.chats), ""],
+    ["LLM token", `${tok(t.llm_in_tokens)} <span class="dim">in</span> · ${tok(t.llm_out_tokens)} <span class="dim">out</span>`, money(t.llm_cost)],
+    ["估算总成本", money(t.stt_cost + t.llm_cost), "转录 + LLM"],
+  ].map(([k, v, d]) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div><div class="d">${d}</div></div>`).join("");
+
+  $("head").innerHTML = COLS.map((c) =>
+    `<th data-key="${c.key}" class="${c.key === sortKey ? "sorted" : ""}">${c.label}${c.key === sortKey ? (sortDesc ? " ↓" : " ↑") : ""}</th>`).join("");
+  $("head").querySelectorAll("th").forEach((th) => th.addEventListener("click", () => {
+    const k = th.dataset.key;
+    if (k === sortKey) sortDesc = !sortDesc; else { sortKey = k; sortDesc = k !== "name"; }
+    render();
+  }));
+
+  const f = $("filter").value.trim().toLowerCase();
+  const col = COLS.find((c) => c.key === sortKey);
+  const rows = data.users
+    .filter((u) => !f || (u.email || "").toLowerCase().includes(f) || (u.name || "").toLowerCase().includes(f))
+    .sort((a, b) => { const x = col.get(a), y = col.get(b); return (x < y ? -1 : x > y ? 1 : 0) * (sortDesc ? -1 : 1); });
+  $("body").innerHTML = rows.map((u) =>
+    `<tr data-id="${esc(u.id)}" class="${u.id === openId ? "open" : ""}">${COLS.map((c) => `<td>${c.render(u)}</td>`).join("")}</tr>` +
+    (u.id === openId ? `<tr class="detail"><td colspan="${COLS.length}"><div class="detail-inner" id="detail">加载中…</div></td></tr>` : "")
+  ).join("") || `<tr><td colspan="${COLS.length}" class="dim">还没有用户数据</td></tr>`;
+  $("body").querySelectorAll("tr[data-id]").forEach((tr) => tr.addEventListener("click", () => {
+    openId = openId === tr.dataset.id ? null : tr.dataset.id;
+    render();
+  }));
+  if (openId) loadDetail(openId);
+}
+
+async function loadDetail(id) {
+  const box = $("detail");
+  if (!box) return;
+  try {
+    const r = await fetch(`/api/admin/users/${encodeURIComponent(id)}?days=30&events=40`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    const days = d.days.map((x) =>
+      `<tr><td>${esc(x.day)}</td><td>${num(x.lectures)}</td><td>${dur(x.stt_seconds)}</td><td>${num(x.catchups)}</td><td>${num(x.chats)}</td><td>${tok(x.llm_in_tokens)}</td><td>${tok(x.llm_out_tokens)}</td><td>${money(x.stt_cost + x.llm_cost)}</td></tr>`
+    ).join("") || `<tr><td colspan="8" class="dim">无</td></tr>`;
+    const evs = d.events.map((e) => {
+      const when = new Date((e.ts || 0) * 1000).toLocaleString();
+      const what = e.kind === "stt"
+        ? `转录 ${dur(e.seconds)} <span class="dim">${esc(e.source || "")}</span>`
+        : `${esc(e.kind)} <span class="dim">${tok(e.in_tokens)} in · ${tok(e.out_tokens)} out · ${e.elapsed_ms ? (e.elapsed_ms / 1000).toFixed(1) + "s" : ""}</span>`;
+      return `<tr><td>${when}</td><td style="text-align:left">${what}</td><td>${money(e.cost)}</td></tr>`;
+    }).join("") || `<tr><td colspan="3" class="dim">无</td></tr>`;
+    box.innerHTML = `
+      <div><h3>最近 30 天</h3><table><thead><tr><th style="text-align:left">日期</th><th>课堂</th><th>转录</th><th>Catch-up</th><th>对话</th><th>in</th><th>out</th><th>成本</th></tr></thead><tbody>${days}</tbody></table></div>
+      <div><h3>最近 40 条明细</h3><table><thead><tr><th style="text-align:left">时间</th><th style="text-align:left">事件</th><th>成本</th></tr></thead><tbody>${evs}</tbody></table></div>`;
+  } catch (e) {
+    box.innerHTML = `<span class="err">加载失败：${esc(e.message)}</span>`;
+  }
+}
+
+$("reload").addEventListener("click", load);
+$("filter").addEventListener("input", () => data && render());
+load();
+</script>
+</body>
+</html>

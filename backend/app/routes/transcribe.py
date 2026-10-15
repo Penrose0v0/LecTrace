@@ -16,11 +16,11 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from .. import quota
+from .. import quota, usage
 from ..auth import ws_user
 from ..config import get_settings
 from ..deps import get_store
-from ..models import Segment, SessionInfo
+from ..models import Segment, SessionInfo, User
 from ..recording import open_recorder
 from ..transcription import ReplaySource, list_demo_sessions, make_stt_runner, stt_sample_rate
 
@@ -53,7 +53,7 @@ async def ws_transcribe(ws: WebSocket) -> None:
         if info.source == "replay":
             await _run_replay(ws, info, cap)
         else:
-            await _run_stt(ws, info, cap)
+            await _run_stt(ws, info, cap, user)
     except WebSocketDisconnect:
         return
     except Exception as exc:  # noqa: BLE001 - 兜底反馈给前端
@@ -135,7 +135,7 @@ async def _heartbeat(ws: WebSocket) -> None:
         await ws.send_json({"type": "ping"})
 
 
-async def _run_stt(ws: WebSocket, info: SessionInfo, cap: float | None) -> None:
+async def _run_stt(ws: WebSocket, info: SessionInfo, cap: float | None, user: User) -> None:
     settings = get_settings()
     store = get_store()
 
@@ -209,6 +209,8 @@ async def _run_stt(ws: WebSocket, info: SessionInfo, cap: float | None) -> None:
         ping_task.cancel()
         if limit_task is not None:
             limit_task.cancel()
+        # 本次连接的收音时长 ≈ STT 计费时长（暂停期间不连，所以不算）
+        await usage.record_stt(store, user, settings, info.id, loop.time() - started, info.source)
         if recorder is not None:
             rec = await asyncio.to_thread(recorder.close_blocking)
             if rec is not None:

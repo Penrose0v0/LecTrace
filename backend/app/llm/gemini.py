@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import AsyncIterator
 
-from .base import LLMError, Message, open_stream, sse_json_events
+from .base import LLMError, LLMUsage, Message, open_stream, sse_json_events
 
 _ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent"
 
@@ -47,7 +47,13 @@ class GeminiProvider:
         self._thinking_budget = thinking_budget
 
     async def stream(
-        self, messages: list[Message], *, max_tokens: int, temperature: float, thinking: bool = False
+        self,
+        messages: list[Message],
+        *,
+        max_tokens: int,
+        temperature: float,
+        thinking: bool = False,
+        usage: LLMUsage | None = None,
     ) -> AsyncIterator[str]:
         url = _ENDPOINT.format(model=self.model)
         payload = to_gemini_payload(messages, max_tokens, temperature, self._thinking_budget if thinking else 0)
@@ -56,6 +62,12 @@ class GeminiProvider:
             "Gemini", "POST", url, params={"key": self._api_key, "alt": "sse"}, json=payload
         ) as resp:
             async for obj in sse_json_events(resp):
+                # 每个 chunk 都带累计 usageMetadata，取最后一次即总量；思考 token 算进输出
+                if usage is not None and (um := obj.get("usageMetadata")):
+                    usage.set(
+                        um.get("promptTokenCount"),
+                        (um.get("candidatesTokenCount") or 0) + (um.get("thoughtsTokenCount") or 0),
+                    )
                 for cand in obj.get("candidates", []):
                     for part in cand.get("content", {}).get("parts", []):
                         if part.get("thought"):

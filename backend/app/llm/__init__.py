@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from ..config import Settings
-from .base import LLMError, LLMProvider, Message
+from .base import LLMError, LLMProvider, LLMUsage, Message
 
 
 def get_llm(settings: Settings) -> LLMProvider:
@@ -42,4 +42,4 @@ def get_llm(settings: Settings) -> LLMProvider:
     raise LLMError(f"未知 LLM_PROVIDER: {p}")
 
 
-__all__ = ["LLMError", "LLMProvider", "Message", "get_llm"]
+__all__ = ["LLMError", "LLMProvider", "LLMUsage", "Message", "get_llm"]
