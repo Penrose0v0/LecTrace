@@ -21,10 +21,14 @@ router = APIRouter(prefix="/api", tags=["auth"])
 
 
 async def _login_payload(user: User, settings: Settings) -> dict:
+    store = get_store()
+    saved = await store.get_prefs(user.id)
     return {
         "user": user.model_dump(),
-        "prefs": (await load_prefs(user, settings)).model_dump(),
-        "quota": await quota.status(get_store(), user, settings),
+        "prefs": (saved or await load_prefs(user, settings)).model_dump(),
+        # False = 服务端没存过（新用户，或本地内存后端重启丢了）；前端据此用浏览器语言 / 本地缓存补上
+        "prefs_saved": saved is not None,
+        "quota": await quota.status(store, user, settings),
     }
 
 

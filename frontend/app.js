@@ -239,6 +239,24 @@ const state = {
 };
 const MAX_RECONNECT = 5;
 
+// ---------------- 语言检测 / 偏好本地缓存 ----------------
+// Google 已不在 ID token 里给账号语言，用浏览器语言代替（通常一致）
+function browserLang() {
+  const l = (navigator.language || "").toLowerCase();
+  if (l.startsWith("zh")) return "zh";
+  if (l.startsWith("ja")) return "ja";
+  if (l.startsWith("en")) return "en";
+  return null;
+}
+// 偏好在浏览器也存一份（按用户 id）：服务端丢了（本地内存后端重启）就用它补回去
+const prefsKey = (uid) => `lt_prefs:${uid}`;
+function readLocalPrefs(uid) {
+  try { return JSON.parse(localStorage.getItem(prefsKey(uid)) || "null"); } catch (e) { return null; }
+}
+function writeLocalPrefs(uid, prefs) {
+  try { localStorage.setItem(prefsKey(uid), JSON.stringify(prefs)); } catch (e) { /* 隐私模式等 */ }
+}
+
 // =====================================================================
 // 登录
 // =====================================================================
@@ -248,13 +266,14 @@ async function boot() {
     fetch("/api/auth/me").then((r) => r.json()).catch(() => ({ user: null })),
   ]);
   state.authConfig = cfg;
-  if (me.user) enterApp(me.user, me.prefs, me.quota);
+  if (me.user) enterApp(me.user, me.prefs, me.quota, me.prefs_saved);
   else showLogin();
 }
 
 function showLogin() {
   $("appShell").classList.add("hidden");
   $("loginView").classList.remove("hidden");
+  uiLang = browserLang() || uiLang;
   applyI18n();
   const cfg = state.authConfig;
   $("devLoginBtn").classList.toggle("hidden", !cfg.dev_login);
@@ -283,7 +302,7 @@ async function onGoogleCredential(resp) {
   try {
     const r = await postJson("/api/auth/google", { credential: resp.credential });
     const d = await r.json();
-    enterApp(d.user, d.prefs, d.quota);
+    enterApp(d.user, d.prefs, d.quota, d.prefs_saved);
   } catch (e) {
     $("loginHint").textContent = t("loginFailed") + e.message;
   }
@@ -293,7 +312,7 @@ async function devLogin() {
   try {
     const r = await postJson("/api/auth/dev", {});
     const d = await r.json();
-    enterApp(d.user, d.prefs, d.quota);
+    enterApp(d.user, d.prefs, d.quota, d.prefs_saved);
   } catch (e) {
     $("loginHint").textContent = t("loginFailed") + e.message;
   }
@@ -307,10 +326,21 @@ async function logout() {
   location.reload();
 }
 
-function enterApp(user, prefs, quota) {
+function enterApp(user, prefs, quota, prefsSaved) {
   state.user = user;
   state.quota = quota || null;
   state.prefs = { ...state.prefs, ...(prefs || {}) };
+  if (!prefsSaved) {
+    // 服务端没有偏好：优先用浏览器里缓存的那份，否则按浏览器语言；然后写回服务端
+    const local = readLocalPrefs(user.id);
+    if (local) state.prefs = { ...state.prefs, ...local };
+    else {
+      const l = browserLang();
+      if (l) state.prefs.ui_language = l;
+    }
+    api("/api/me/prefs", { method: "PUT", body: JSON.stringify(state.prefs) }).catch(() => {});
+  }
+  writeLocalPrefs(user.id, state.prefs);
   uiLang = state.prefs.ui_language || "ja";
   document.documentElement.dataset.theme = state.prefs.theme || "dark";
   $("loginView").classList.add("hidden");
@@ -1089,6 +1119,7 @@ async function savePrefs() {
   try {
     const r = await api("/api/me/prefs", { method: "PUT", body: JSON.stringify(prefs) });
     state.prefs = await r.json();
+    writeLocalPrefs(state.user.id, state.prefs);
     uiLang = state.prefs.ui_language;
     document.documentElement.dataset.theme = state.prefs.theme || "dark";
     applyI18n();
