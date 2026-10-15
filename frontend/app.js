@@ -30,7 +30,7 @@ const I18N = {
     catchup: "Catch-up", explain: "Explain", chatPlaceholder: "この講義について質問…",
     chatEmpty: "ついていけなくなったら Catch-up。\n用語が分からなければ Explain。\nあとは何でも聞いてください。",
     chatEmptyNoSession: "文字起こしを始めると、ここで質問や Catch-up ができます。",
-    catchupLoading: (x) => `直近 ${x} 分を要約中…`, failed: "失敗：",
+    catchupLoading: (x) => `直近 ${x} 分を要約中…`, chatThinking: "考え中…", failed: "失敗：",
     historyTitle: "履歴", historyEmpty: "まだ講義がありません。",
     segUnit: (n) => `${n} 件`,
     settingsTitle: "設定", sUiLang: "表示・要約の言語", sLectureLang: "既定の講義の言語",
@@ -74,7 +74,7 @@ const I18N = {
     catchup: "Catch-up", explain: "Explain", chatPlaceholder: "问问这节课的内容…",
     chatEmpty: "没跟上就点 Catch-up，\n听不懂的术语点 Explain，\n其他的随便问。",
     chatEmptyNoSession: "开始转录后，就可以在这里提问或 Catch-up。",
-    catchupLoading: (x) => `正在总结最近 ${x} 分钟…`, failed: "失败：",
+    catchupLoading: (x) => `正在总结最近 ${x} 分钟…`, chatThinking: "思考中…", failed: "失败：",
     historyTitle: "历史", historyEmpty: "还没有课堂。",
     segUnit: (n) => `${n} 段`,
     settingsTitle: "设置", sUiLang: "界面与摘要语言", sLectureLang: "默认讲义语言",
@@ -118,7 +118,7 @@ const I18N = {
     catchup: "Catch-up", explain: "Explain", chatPlaceholder: "Ask about this lecture…",
     chatEmpty: "Lost the thread? Catch-up.\nUnfamiliar term? Explain.\nOr ask anything.",
     chatEmptyNoSession: "Start transcribing to ask questions or catch up here.",
-    catchupLoading: (x) => `Summarizing the last ${x} min…`, failed: "Failed: ",
+    catchupLoading: (x) => `Summarizing the last ${x} min…`, chatThinking: "Thinking…", failed: "Failed: ",
     historyTitle: "History", historyEmpty: "No lectures yet.",
     segUnit: (n) => `${n} segs`,
     settingsTitle: "Settings", sUiLang: "Interface & summary language", sLectureLang: "Default lecture language",
@@ -171,8 +171,24 @@ function fmtDate(epoch) {
 function escapeHtml(s) {
   return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
-// 轻量 markdown：**粗体**、- 列表、# 标题 → HTML（先转义）
+// markdown → HTML：优先 marked（GFM、表格、引用、分割线…）+ DOMPurify 消毒；
+// CDN 没加载到就退回下面的简易渲染（粗体 / 列表 / 标题）
+let mdReady = false;
 function renderMd(text) {
+  if (window.marked && window.DOMPurify) {
+    if (!mdReady) {
+      marked.setOptions({ gfm: true, breaks: true });
+      // 链接新窗口打开，并防 reverse-tabnabbing
+      DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+        if (node.tagName === "A") { node.setAttribute("target", "_blank"); node.setAttribute("rel", "noopener noreferrer"); }
+      });
+      mdReady = true;
+    }
+    return DOMPurify.sanitize(marked.parse(text || ""), { USE_PROFILES: { html: true } });
+  }
+  return renderMdLite(text);
+}
+function renderMdLite(text) {
   const lines = escapeHtml(text || "").split("\n");
   let html = "", inList = false;
   const inline = (s) => s.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>");
@@ -1128,6 +1144,7 @@ async function sendChat({ preset = null, message = "" } = {}) {
   setBusy(true);
   const userBubble = addUserBubble(message || "…");
   const div = addAssistant("chat");
+  setBody(div, t("chatThinking"), { loading: true });  // 开思考时首 token 要等几秒
   let acc = "";
   try {
     const r = await postJson("/api/chat", {

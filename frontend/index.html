@@ -234,6 +234,9 @@
     </div>
   </div>
 
+  <!-- markdown 渲染（对话回复）+ HTML 消毒；加载失败时 app.js 会退回内置的简易渲染 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/15.0.7/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.4/purify.min.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

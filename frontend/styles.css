@@ -333,12 +333,49 @@ input[type="range"] { flex: 1; accent-color: var(--text); height: 24px; }
   display: inline-flex; align-items: center; gap: 6px; margin-bottom: 8px;
   font-size: 11.5px; color: var(--muted); letter-spacing: .04em; text-transform: uppercase;
 }
+/* ---- 回复正文的 markdown 排版 ---- */
+.msg-body { white-space: normal; }
 .msg-body.loading { color: var(--muted); }
-.msg-body b { font-weight: 600; }
-.msg-body ul { margin: 6px 0 2px; padding-left: 18px; }
-.msg-body li { margin: 2px 0; }
-.msg-body p { margin: 0 0 6px; }
-.msg.streaming .msg-body::after { content: "▍"; color: var(--muted); animation: blink 1s infinite; }
+.msg-body > :first-child { margin-top: 0; }
+.msg-body > :last-child { margin-bottom: 0; }
+.msg-body p { margin: 0 0 10px; }
+.msg-body b, .msg-body strong { font-weight: 600; color: var(--text); }
+.msg-body em { font-style: italic; color: var(--text-2); }
+.msg-body h1, .msg-body h2, .msg-body h3, .msg-body h4 {
+  font-weight: 600; line-height: 1.4; margin: 16px 0 6px; color: var(--text);
+}
+.msg-body h1 { font-size: 16px; }
+.msg-body h2 { font-size: 15.5px; }
+.msg-body h3, .msg-body h4 { font-size: 14.5px; }
+.msg-body ul, .msg-body ol { margin: 4px 0 10px; padding-left: 22px; }
+.msg-body li { margin: 3px 0; }
+.msg-body li > p { margin: 0; }
+.msg-body li::marker { color: var(--muted); }
+.msg-body blockquote {
+  margin: 6px 0 10px; padding: 2px 0 2px 12px; border-left: 2px solid var(--line-strong);
+  color: var(--text-2);
+}
+.msg-body blockquote p { margin: 0 0 4px; }
+.msg-body hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
+.msg-body code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px;
+  background: var(--bg-4); padding: 1px 6px; border-radius: 6px;
+}
+.msg-body pre {
+  margin: 6px 0 10px; padding: 10px 12px; border-radius: 10px; background: var(--bg-4);
+  overflow-x: auto; white-space: pre; line-height: 1.55;
+}
+.msg-body pre code { background: none; padding: 0; font-size: 12.5px; }
+.msg-body table { border-collapse: collapse; margin: 6px 0 10px; font-size: 13.5px; max-width: 100%; display: block; overflow-x: auto; }
+.msg-body th, .msg-body td { border: 1px solid var(--line); padding: 5px 10px; text-align: left; vertical-align: top; }
+.msg-body th { background: var(--bg-3); font-weight: 600; }
+.msg-body a { color: var(--text); text-decoration: underline; text-underline-offset: 2px; text-decoration-color: var(--line-strong); }
+.msg-body a:hover { text-decoration-color: var(--text); }
+.msg-body img { max-width: 100%; border-radius: 8px; }
+/* 流式光标跟在最后一个块的末尾，而不是另起一行 */
+.msg.streaming .msg-body > :last-child::after,
+.msg.streaming .msg-body:empty::after { content: "▍"; color: var(--muted); animation: blink 1s infinite; }
+.msg.streaming .msg-body.loading::after { content: ""; }
 
 .chat-foot { padding-top: 14px; display: flex; flex-direction: column; gap: 12px; }
 .quick { display: flex; gap: 10px; }
