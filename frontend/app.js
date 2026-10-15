@@ -38,6 +38,13 @@ const I18N = {
     save: "保存", saved: "保存しました", saveFailed: "保存に失敗しました",
     confirmInterrupt: "文字起こし中です。続けると現在の文字起こしは中断されます（あとで履歴から再開できます）。よろしいですか？",
     replayLabel: (f, m, n) => `${f} · ${m}分 / ${n}件`,
+    deleteLecture: "この講義を削除", cancel: "キャンセル", delete: "削除",
+    confirmDeleteTitle: "講義を削除しますか？",
+    confirmDeleteBody: (title) => `「${title}」の文字起こし・Catch-up・チャット・録音をすべて削除します。この操作は取り消せません。`,
+    confirmInterruptTitle: "文字起こしを中断しますか？",
+    continueLabel: "続ける",
+    noticeLimit: (m) => `この講義は無料枠の上限 ${m} 分に達したため、文字起こしを停止しました。ここまでの内容は保存されています。`,
+    noticeDaily: (n) => `今日はもう ${n} 回講義を作成しました（無料枠）。明日またどうぞ。`,
     stLimit: (m) => `この講義は上限の ${m} 分に達しました`,
     errQuotaDaily: (n) => `今日はもう ${n} 回講義を作成しました。また明日どうぞ。`,
     quotaLine: (used, max, min) => `今日 ${used}/${max} 回 · 1回 ${min} 分まで`,
@@ -75,6 +82,13 @@ const I18N = {
     save: "保存", saved: "已保存", saveFailed: "保存失败",
     confirmInterrupt: "正在转录中，继续会中断当前转录（之后可以从历史里继续）。确定吗？",
     replayLabel: (f, m, n) => `${f} · ${m}分 / ${n}段`,
+    deleteLecture: "删除这节课", cancel: "取消", delete: "删除",
+    confirmDeleteTitle: "删除这节课？",
+    confirmDeleteBody: (title) => `将删除「${title}」的转录、Catch-up、对话和录音，无法恢复。`,
+    confirmInterruptTitle: "中断当前转录？",
+    continueLabel: "继续",
+    noticeLimit: (m) => `这节课已达到免费额度上限 ${m} 分钟，转录已停止。到此为止的内容都已保存。`,
+    noticeDaily: (n) => `今天已经创建了 ${n} 节课（免费额度），明天再来吧。`,
     stLimit: (m) => `这节课已达到 ${m} 分钟上限`,
     errQuotaDaily: (n) => `今天已经创建了 ${n} 节课，明天再来吧。`,
     quotaLine: (used, max, min) => `今天 ${used}/${max} 节 · 每节最多 ${min} 分钟`,
@@ -112,6 +126,13 @@ const I18N = {
     save: "Save", saved: "Saved", saveFailed: "Save failed",
     confirmInterrupt: "Transcription is running. Continuing will interrupt it (you can resume from History later). Proceed?",
     replayLabel: (f, m, n) => `${f} · ${m} min / ${n} segs`,
+    deleteLecture: "Delete this lecture", cancel: "Cancel", delete: "Delete",
+    confirmDeleteTitle: "Delete this lecture?",
+    confirmDeleteBody: (title) => `This removes the transcript, catch-ups, chat and recording of “${title}”. This can't be undone.`,
+    confirmInterruptTitle: "Interrupt transcription?",
+    continueLabel: "Continue",
+    noticeLimit: (m) => `This lecture reached the free-tier limit of ${m} minutes, so transcription stopped. Everything so far is saved.`,
+    noticeDaily: (n) => `You've already created ${n} lectures today (free tier). Come back tomorrow.`,
     stLimit: (m) => `This lecture reached the ${m}-minute limit`,
     errQuotaDaily: (n) => `You've already created ${n} lectures today. Come back tomorrow.`,
     quotaLine: (used, max, min) => `Today ${used}/${max} · up to ${min} min each`,
@@ -176,7 +197,9 @@ async function api(path, opts = {}) {
   if (r.status === 401) { showLogin(); throw new Error("unauthorized"); }
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));
-    throw new Error(errorText(err.detail) || `HTTP ${r.status}`);
+    const e = new Error(errorText(err.detail) || `HTTP ${r.status}`);
+    if (err.detail && typeof err.detail === "object") { e.quota = err.detail.code; e.limit = err.detail.limit; }
+    throw e;
   }
   return r;
 }
@@ -216,6 +239,31 @@ async function parseSSE(body, handlers) {
     }
   }
 }
+
+// ---------------- 确认弹窗 / 提示条 ----------------
+let dialogResolve = null;
+function confirmDialog({ title, body, confirmLabel, danger = false }) {
+  $("dialogTitle").textContent = title;
+  $("dialogBody").textContent = body;
+  $("dialogCancel").textContent = t("cancel");
+  $("dialogConfirm").textContent = confirmLabel;
+  $("dialogConfirm").classList.toggle("btn-danger", danger);
+  $("dialogConfirm").classList.toggle("btn-primary", !danger);
+  $("dialogBackdrop").classList.remove("hidden");
+  $("dialogConfirm").focus();
+  return new Promise((resolve) => { dialogResolve = resolve; });
+}
+function closeDialog(result) {
+  $("dialogBackdrop").classList.add("hidden");
+  const r = dialogResolve; dialogResolve = null;
+  if (r) r(result);
+}
+function showNotice(text, kind = "warn") {
+  $("noticeText").textContent = text;
+  $("notice").className = `notice ${kind}`;
+  if (state.sheetOpen) requestAnimationFrame(layoutSheet);
+}
+function hideNotice() { $("notice").classList.add("hidden"); if (state.sheetOpen) requestAnimationFrame(layoutSheet); }
 
 // =====================================================================
 // 状态
@@ -402,8 +450,9 @@ function closeHistory() {
 }
 
 // 转录中要离开当前讲义时提示会中断
-function confirmInterrupt() {
-  return !state.transcribing || confirm(t("confirmInterrupt"));
+async function confirmInterrupt() {
+  if (!state.transcribing) return true;
+  return confirmDialog({ title: t("confirmInterruptTitle"), body: t("confirmInterrupt"), confirmLabel: t("continueLabel") });
 }
 
 // =====================================================================
@@ -419,9 +468,10 @@ function defaultMeta() {
   };
 }
 
-function newLecture() {
-  if (!confirmInterrupt()) return;
+async function newLecture() {
+  if (!(await confirmInterrupt())) return;
   teardownTranscription();
+  hideNotice();
   state.session = null;
   state.meta = defaultMeta();
   state.latestT = 0; state.tBase = 0;
@@ -443,8 +493,9 @@ function newLecture() {
 
 async function openLecture(id) {
   if (state.session?.id === id) { closeHistory(); showView("lecture"); return; }
-  if (!confirmInterrupt()) return;
+  if (!(await confirmInterrupt())) return;
   teardownTranscription();
+  hideNotice();
   let data;
   try {
     data = await (await api(`/api/sessions/${id}`)).json();
@@ -624,7 +675,8 @@ async function onRecClick() {
       state.session = await r.json();
       if (state.quota) { state.quota.lectures_today++; renderProfile(); }
     } catch (e) {
-      setStatus("stError", { param: e.message, err: true });
+      if (e.quota === "quota_lectures_per_day") { setStatus("stIdle"); showNotice(t("noticeDaily")(e.limit)); }
+      else setStatus("stError", { param: e.message, err: true });
       $("recBtn").classList.remove("busy");
       return;
     }
@@ -681,6 +733,7 @@ function onTranscriptMessage(ev) {
     // 配额：这节课到时长上限了，停在暂停态并提示
     enterPaused();
     setStatus("stLimit", { param: msg.limit, err: true });
+    showNotice(t("noticeLimit")(msg.limit));
   } else if (msg.type === "error") {
     enterPaused();
     setStatus("stError", { param: msg.message, err: true });
@@ -1125,12 +1178,33 @@ async function loadHistory() {
           <span>${escapeHtml(fmtDate(s.created_at))}</span>
           <span>${fmtTime(s.latest_t)}</span>
           <span>${escapeHtml(t("segUnit")(s.segment_count))}</span>
-        </div>`;
+        </div>
+        <span class="hist-del" role="button" tabindex="0" title="${escapeHtml(t("deleteLecture"))}"><svg class="icon"><use href="#i-trash"/></svg></span>`;
       b.onclick = () => openLecture(s.id);
+      b.querySelector(".hist-del").onclick = (e) => { e.stopPropagation(); deleteLecture(s, b); };
       list.appendChild(b);
     }
   } catch (e) {
     list.innerHTML = `<div class="history-empty">${escapeHtml(t("failed") + e.message)}</div>`;
+  }
+}
+
+async function deleteLecture(s, card) {
+  const ok = await confirmDialog({
+    title: t("confirmDeleteTitle"), body: t("confirmDeleteBody")(s.title || t("untitled")),
+    confirmLabel: t("delete"), danger: true,
+  });
+  if (!ok) return;
+  try {
+    await api(`/api/sessions/${s.id}`, { method: "DELETE" });
+  } catch (e) { showNotice(t("failed") + e.message); return; }
+  card.remove();
+  if (!$("historyList").querySelector(".hist-card")) $("historyList").innerHTML = `<div class="history-empty">${escapeHtml(t("historyEmpty"))}</div>`;
+  if (state.session?.id === s.id) {  // 删的是当前打开的这节：直接回到新建状态
+    teardownTranscription();
+    state.session = null;
+    closeHistory();
+    newLecture();
   }
 }
 
@@ -1204,6 +1278,11 @@ $("chatInput").addEventListener("keydown", (e) => {
 
 $("sWindow").addEventListener("input", () => { $("sWindowVal").textContent = $("sWindow").value; });
 $("savePrefsBtn").addEventListener("click", savePrefs);
+$("dialogCancel").addEventListener("click", () => closeDialog(false));
+$("dialogConfirm").addEventListener("click", () => closeDialog(true));
+$("dialogBackdrop").addEventListener("click", (e) => { if (e.target === e.currentTarget) closeDialog(false); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && dialogResolve) closeDialog(false); });
+$("noticeClose").addEventListener("click", hideNotice);
 
 document.addEventListener("click", (e) => {
   if (!e.target.closest("#threadMenu, #threadBtn")) $("threadMenu").classList.add("hidden");

@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="icon" href="data:," />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
@@ -22,6 +23,8 @@
       <symbol id="i-pause" viewBox="0 0 24 24"><rect x="7" y="6" width="3.5" height="12" rx="1.2" fill="currentColor"/><rect x="13.5" y="6" width="3.5" height="12" rx="1.2" fill="currentColor"/></symbol>
       <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
       <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4.5h6V7M7 7l.8 12.5h8.4L17 7M10 11v6M14 11v6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
       <symbol id="i-dots" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/><circle cx="18" cy="12" r="1.6" fill="currentColor"/></symbol>
     </defs>
   </svg>
@@ -78,6 +81,11 @@
               <span id="metaLabel"></span>
               <svg class="icon icon-sm chev"><use href="#i-chevron"/></svg>
             </button>
+          </div>
+
+          <div id="notice" class="notice hidden">
+            <span id="noticeText"></span>
+            <button id="noticeClose" class="notice-close" title="close"><svg class="icon icon-sm"><use href="#i-close"/></svg></button>
           </div>
 
           <div class="stage-body">
@@ -211,6 +219,18 @@
         </div>
       </div>
       <button id="logoutBtn" class="menu-item" data-i18n="logout">Sign out</button>
+    </div>
+  </div>
+
+  <!-- 确认弹窗 -->
+  <div id="dialogBackdrop" class="dialog-backdrop hidden">
+    <div class="dialog" role="dialog" aria-modal="true">
+      <div id="dialogTitle" class="dialog-title"></div>
+      <div id="dialogBody" class="dialog-body"></div>
+      <div class="dialog-actions">
+        <button id="dialogCancel" class="btn"></button>
+        <button id="dialogConfirm" class="btn btn-primary"></button>
+      </div>
     </div>
   </div>
 

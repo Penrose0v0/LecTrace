@@ -43,6 +43,13 @@ class MemoryStore:
             meta.setdefault("recordings", []).append(info)
             meta["updated_at"] = time.time()
 
+    async def delete_session(self, session_id: str) -> None:
+        self._meta.pop(session_id, None)
+        self._segments.pop(session_id, None)
+        self._cards.pop(session_id, None)
+        for cid in [c.id for c in self._convs.values() if c.session_id == session_id]:
+            del self._convs[cid]
+
     def _info(self, session_id: str, meta: dict) -> SessionInfo:
         segs = self._segments.get(session_id, [])
         known = {k: v for k, v in meta.items() if k in SessionInfo.model_fields}

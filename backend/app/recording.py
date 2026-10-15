@@ -74,6 +74,24 @@ class Recorder:
         return {**self.info, "bytes": self._bytes, "duration_sec": self._bytes / bps}
 
 
+def delete_recordings(settings: Settings, infos: list[dict]) -> None:
+    """删掉一组 take 的音频文件（阻塞，放到线程里调）。单个失败只记日志。"""
+    client = None
+    for info in infos:
+        path = str(info.get("path", ""))
+        try:
+            if path.startswith("gs://"):
+                from google.cloud import storage
+
+                client = client or storage.Client()
+                bucket, _, name = path[len("gs://"):].partition("/")
+                client.bucket(bucket).blob(name).delete()
+            elif path:
+                (settings.recordings_dir / path).unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001
+            log.exception("delete recording failed: %s", path)
+
+
 def open_recorder(
     settings: Settings, session_id: str, take: int, sample_rate: int, t_offset: float
 ) -> Recorder | None:

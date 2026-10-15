@@ -60,6 +60,28 @@ class FirestoreStore:
             {"recordings": firestore.ArrayUnion([info]), "updated_at": time.time()}, merge=True
         )
 
+    async def delete_session(self, session_id: str) -> None:
+        sess = self._session(session_id)
+        for sub in ("segments", "cards"):
+            await self._delete_all(sess.collection(sub))
+        convs = self._db.collection("conversations").where(
+            filter=firestore.FieldFilter("session_id", "==", session_id)
+        )
+        await self._delete_all(convs)
+        await sess.delete()
+
+    async def _delete_all(self, query) -> None:
+        """分批删掉查询结果（一批最多 500 次写）。"""
+        batch, n = self._db.batch(), 0
+        async for snap in query.stream():
+            batch.delete(snap.reference)
+            n += 1
+            if n % 400 == 0:
+                await batch.commit()
+                batch = self._db.batch()
+        if n % 400:
+            await batch.commit()
+
     @staticmethod
     def _info(session_id: str, d: dict) -> SessionInfo:
         known = {k: v for k, v in d.items() if k in SessionInfo.model_fields and k != "id"}

@@ -30,6 +30,10 @@ class Store(Protocol):
         """追加一个录音 take 的元信息（见 recording.py）。"""
         ...
 
+    async def delete_session(self, session_id: str) -> None:
+        """删掉会话及其段落、卡片、对话线程。录音文件由调用方另删（见 recording.delete_recordings）。"""
+        ...
+
     # ---- 转录段落 ----
     async def append(self, session_id: str, segment: Segment) -> None: ...
 

@@ -53,7 +53,7 @@ OpenAI / Gemini 的实现还在（`LLM_PROVIDER=openai|gemini`），只是暂不
 
 把自己放进 `ADMIN_EMAILS`（不受限），其他登录用户默认受两条限制，都在 `.env` 里调，0 = 不限：
 
-- `QUOTA_MAX_LECTURE_MINUTES=60`：单节课转录时长上限，暂停再继续算同一节。到点服务端停止收音、
+- `QUOTA_MAX_LECTURE_MINUTES=105`（1 小时 45 分）：单节课转录时长上限，暂停再继续算同一节。到点服务端停止收音、
   冲完尾段后发 `limit` 消息，前端进入暂停并提示；再按继续会立刻被拒。
 - `QUOTA_MAX_LECTURES_PER_DAY=3`：每天最多新建几节课，按 `QUOTA_TIMEZONE`（默认 Asia/Tokyo）的自然日，
   超过时新建返回 429。登录响应里的 `quota` 字段给前端显示"今天 n/3 节"。

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,6 +12,7 @@ from ..auth import current_user
 from ..config import Settings, get_settings
 from ..deps import get_store, owned_session
 from ..models import LANGS, SOURCES, LectureMeta, LectureUpdate, SessionInfo, User
+from ..recording import delete_recordings
 from ..transcription import list_demo_sessions
 
 router = APIRouter(prefix="/api", tags=["lectures"])
@@ -65,6 +67,17 @@ async def update_session(patch: LectureUpdate, info: SessionInfo = Depends(owned
         await store.update_session(info.id, data)
     updated = await store.get_session(info.id)
     return updated.model_dump() if updated else {}
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_session(
+    info: SessionInfo = Depends(owned_session), settings: Settings = Depends(get_settings)
+) -> dict:
+    """删掉整节课：转录、Catch-up、对话线程、录音文件。不可恢复。"""
+    await get_store().delete_session(info.id)
+    if info.recordings:
+        await asyncio.to_thread(delete_recordings, settings, info.recordings)
+    return {"ok": True}
 
 
 @router.get("/sessions/{session_id}/cards")

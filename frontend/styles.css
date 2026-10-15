@@ -174,6 +174,15 @@ input[type="range"] { flex: 1; accent-color: var(--text); height: 24px; }
   transition: background .15s;
 }
 .hist-card:hover { background: var(--bg-3); }
+.hist-card { position: relative; padding-right: 44px; }
+.hist-del {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  width: 30px; height: 30px; border-radius: 8px; border: none; background: transparent; color: var(--muted);
+  display: grid; place-items: center; opacity: 0; transition: opacity .15s, color .15s, background .15s;
+}
+.hist-card:hover .hist-del, .hist-del:focus-visible { opacity: 1; }
+.hist-del:hover { color: var(--err); background: var(--bg-4); }
+.hist-del .icon { width: 17px; height: 17px; }
 .hist-card.current { background: var(--bg-3); box-shadow: inset 2px 0 0 var(--text-2); }
 .hist-title { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hist-meta { display: flex; gap: 10px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -358,3 +367,35 @@ input[type="range"] { flex: 1; accent-color: var(--text); height: 24px; }
 
 .settings-card { max-width: 460px; display: flex; flex-direction: column; gap: 20px; }
 .settings-actions { display: flex; align-items: center; gap: 14px; margin-top: 4px; }
+
+/* =====================================================================
+   提示条 / 确认弹窗
+   ===================================================================== */
+.notice {
+  flex-shrink: 0; margin: 14px 12px 0 0;
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 12px 11px 16px; border-radius: 14px;
+  background: var(--bg-3); border: 1px solid var(--line-strong); color: var(--text);
+  font-size: 13.5px; line-height: 1.5; box-shadow: 0 10px 30px rgba(0, 0, 0, .35);
+  animation: fadein .25s ease;
+}
+.notice.warn { border-color: color-mix(in srgb, var(--warn) 55%, var(--line-strong)); }
+.notice.warn::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--warn); flex-shrink: 0; }
+.notice span { flex: 1; }
+.notice-close { border: none; background: transparent; color: var(--muted); width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; }
+.notice-close:hover { color: var(--text); background: var(--bg-4); }
+
+.dialog-backdrop {
+  position: fixed; inset: 0; z-index: 100; display: grid; place-items: center;
+  background: rgba(0, 0, 0, .55); backdrop-filter: blur(2px); animation: fadein .15s ease;
+}
+.dialog {
+  width: min(420px, calc(100vw - 32px)); padding: 24px 24px 20px;
+  background: var(--bg-2); border: 1px solid var(--line-strong); border-radius: 20px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .5);
+}
+.dialog-title { font-size: 17px; font-weight: 600; margin-bottom: 8px; }
+.dialog-body { color: var(--text-2); font-size: 14px; line-height: 1.6; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+.dialog .btn-danger { background: var(--err); border-color: var(--err); color: #fff; }
+.dialog .btn-danger:hover { opacity: .9; }

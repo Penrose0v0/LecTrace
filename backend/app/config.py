@@ -87,7 +87,7 @@ class Settings:
         e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()
     )
     # 单节课转录时长上限（分钟，0 = 不限）；暂停再继续算同一节
-    quota_max_lecture_minutes: int = int(os.getenv("QUOTA_MAX_LECTURE_MINUTES", "60"))
+    quota_max_lecture_minutes: int = int(os.getenv("QUOTA_MAX_LECTURE_MINUTES", "105"))
     # 每天最多新建几节课（0 = 不限），按 quota_timezone 的自然日
     quota_max_lectures_per_day: int = int(os.getenv("QUOTA_MAX_LECTURES_PER_DAY", "3"))
     quota_timezone: str = os.getenv("QUOTA_TIMEZONE", "Asia/Tokyo")
