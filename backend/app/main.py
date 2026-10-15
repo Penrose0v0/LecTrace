@@ -45,10 +45,22 @@ def health() -> dict:
 
 
 # 前端静态托管（放最后，避免盖住 /api 与 /ws 路由）
+# no-cache ≠ 不缓存：浏览器每次用 ETag 回源校验，没变就 304，变了立刻拿新的。
+# 否则改了 CSS/JS 后用户拿到新 HTML 配旧样式，界面会错乱。
+_NO_CACHE = {"Cache-Control": "no-cache"}
+
+
+class _FreshStaticFiles(StaticFiles):
+    def file_response(self, *args, **kwargs):  # type: ignore[override]
+        resp = super().file_response(*args, **kwargs)
+        resp.headers.update(_NO_CACHE)
+        return resp
+
+
 if FRONTEND_DIR.exists():
 
     @app.get("/")
     def index() -> FileResponse:
-        return FileResponse(FRONTEND_DIR / "index.html")
+        return FileResponse(FRONTEND_DIR / "index.html", headers=_NO_CACHE)
 
-    app.mount("/", StaticFiles(directory=FRONTEND_DIR), name="static")
+    app.mount("/", _FreshStaticFiles(directory=FRONTEND_DIR), name="static")
