@@ -21,3 +21,5 @@ scratchpad/
 # 回放归档只在本地用，不上传
 _archive/
 data/
+.cloudrun.env.yaml
+scripts/

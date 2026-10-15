@@ -22,3 +22,6 @@ models/*.bin
 # Local config / secrets
 .env
 config.local.py
+
+# Cloud Run 环境变量文件（由 scripts/deploy.sh 从 .env 生成，含密钥）
+.cloudrun.env.yaml
