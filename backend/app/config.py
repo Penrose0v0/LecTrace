@@ -48,8 +48,8 @@ class Settings:
     user_language: str = os.getenv("USER_LANGUAGE", "ja")
 
     # ---- 转录源 ----
-    # demo 阶段：replay（回放归档 session）。之后可换 google-stt。
-    transcription_source: str = os.getenv("TRANSCRIPTION_SOURCE", "replay")
+    # 新建课堂的默认音频来源：google-stt（默认）/ openai-stt / replay（本地回放归档）
+    transcription_source: str = os.getenv("TRANSCRIPTION_SOURCE", "google-stt")
     # 归档数据目录（回放用）
     demo_data_dir: Path = ROOT_DIR / os.getenv("DEMO_DATA_DIR", "_archive/data")
     # 回放加速倍率：8 表示 1 小时讲义 ~7.5 分钟放完

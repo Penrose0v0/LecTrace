@@ -44,7 +44,7 @@ class LectureMeta(BaseModel):
     lecture_language: str = "ja"  # 讲义语言（转录语言）
     user_language: str = "ja"  # 用户语言（摘要 / 对话输出语言）
     window_minutes: float = Field(default=3.0, ge=1, le=30)  # Catch-up 回顾时长
-    source: str = "openai-stt"  # openai-stt / google-stt / replay
+    source: str = "google-stt"  # google-stt / openai-stt / replay
     file: str = ""  # source=replay 时的归档文件
 
 

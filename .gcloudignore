@@ -1,4 +1,4 @@
-# Cloud Build 上传上下文时忽略这些（构建只需 backend/ frontend/ _archive/data）
+# Cloud Build 上传上下文时忽略这些（构建只需 backend/ frontend/）
 .git/
 .venv/
 venv/
@@ -18,4 +18,6 @@ config.local.py
 docs/
 scratchpad/
 
-# 注意：不要忽略 _archive/data —— Dockerfile 需要它作为回放数据
+# 回放归档只在本地用，不上传
+_archive/
+data/

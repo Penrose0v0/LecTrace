@@ -421,8 +421,12 @@ async function loadDemoSessions() {
   try {
     const r = await api("/api/demo-sessions");
     state.demoSessions = (await r.json()).sessions || [];
-    renderFileOptions();
-  } catch (e) { /* 没有归档也无妨 */ }
+  } catch (e) { state.demoSessions = []; }
+  // 线上镜像不带归档：没有可回放的文件就不提供"回放"这个来源
+  $("srcReplayOpt").hidden = !state.demoSessions.length;
+  if (!state.demoSessions.length && state.meta?.source === "replay" && !state.session) state.meta.source = "google-stt";
+  renderFileOptions();
+  renderMetaForm();
 }
 
 // =====================================================================
@@ -464,7 +468,7 @@ function defaultMeta() {
     lecture_language: state.prefs.lecture_language || "ja",
     user_language: state.prefs.ui_language || "ja",
     window_minutes: Number(state.prefs.window_minutes) || 3,
-    source: "openai-stt", file: "",
+    source: "google-stt", file: "",
   };
 }
 
@@ -485,7 +489,7 @@ async function newLecture() {
   renderAll();
   fetch("/api/health").then((r) => r.json()).then((h) => {
     if (!state.session && ["openai-stt", "google-stt", "replay"].includes(h.transcription_source)) {
-      state.meta.source = h.transcription_source;
+      if (h.transcription_source !== "replay" || state.demoSessions.length) state.meta.source = h.transcription_source;
       renderMetaForm();
     }
   }).catch(() => {});
@@ -521,7 +525,7 @@ function pickMeta(s) {
   return {
     title: s.title || "", description: s.description || "",
     lecture_language: s.lecture_language || "ja", user_language: s.user_language || "ja",
-    window_minutes: Number(s.window_minutes) || 3, source: s.source || "openai-stt", file: s.file || "",
+    window_minutes: Number(s.window_minutes) || 3, source: s.source || "google-stt", file: s.file || "",
   };
 }
 

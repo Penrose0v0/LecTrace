@@ -8,8 +8,7 @@ RUN pip install --no-cache-dir -r backend/requirements.txt
 
 COPY backend ./backend
 COPY frontend ./frontend
-# demo 回放数据（生产接 STT 后可去掉）
-COPY _archive/data ./_archive/data
+# 回放归档只在本地开发用，不进镜像（没有归档时前端自动隐藏"回放"选项）
 
 ENV PORT=8080
 # Cloud Run 注入 $PORT；WebSocket 长连接由 uvicorn 承载
