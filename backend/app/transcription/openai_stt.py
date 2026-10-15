@@ -6,6 +6,9 @@
 与 google_stt.run_stt 同签名，上层 _run_stt 可统一调度。
 差异：OpenAI 的 delta 是增量片段，这里累加成累计文本再回调 on_interim，
       从而与 Google（累计 interim）对上层保持一致。
+
+OpenAI 单个 Realtime 会话最长 60 分钟。这里在 SESSION_ROTATE_SEC 处主动换一条新会话，
+上游意外断开也会自动重连接着转；音频一直在队列里，不会丢。只有收到 None（用户停止）才真正结束。
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ import logging
 from typing import Awaitable, Callable
 
 from websockets.asyncio.client import connect
+from websockets.exceptions import ConnectionClosed
 
 log = logging.getLogger("lectrace.stt")
 
@@ -25,12 +29,25 @@ log = logging.getLogger("lectrace.stt")
 LANG_MAP = {"ja": "ja", "en": "en", "zh": "zh"}
 SAMPLE_RATE = 24000
 REALTIME_URL = "wss://api.openai.com/v1/realtime?intent=transcription"
+SESSION_ROTATE_SEC = 50 * 60  # 60 分钟硬上限前主动换会话
+FLUSH_SEC = 10.0  # 停止 / 轮换时等尾段 final 的时间
+RECONNECT_DELAY_SEC = 1.0
 
 OnText = Callable[[str], Awaitable[None]]
 
 
 def lang_code(lecture_lang: str) -> str:
     return LANG_MAP.get(lecture_lang, "ja")
+
+
+def _peak(chunk: bytes) -> int:
+    """采样峰值：接近 0 说明静音(采集问题)，几千+说明有声音。"""
+    try:
+        a = array.array("h")
+        a.frombytes(chunk)
+        return max(abs(min(a)), abs(max(a))) if a else 0
+    except Exception:  # noqa: BLE001
+        return 0
 
 
 async def run_stt(
@@ -43,15 +60,33 @@ async def run_stt(
     model: str,
     silence_ms: int = 800,
     commit_ms: int = 4000,
+    rotate_sec: float = SESSION_ROTATE_SEC,
 ) -> None:
     """从 audio_queue 取音频喂给 OpenAI Realtime，回调 interim / final。队列 None 结束。
 
-    silence_ms：VAD 判定"说完一句"所需的静音时长。默认 VAD 阈值太短(~200ms)，
-    讲师短停顿就切段 → 碎片太短 → 模型幻觉。调大到 ~800ms 合并短停顿，
-    给模型足够上下文，转录更连贯。
+    silence_ms：VAD 判定"说完一句"所需的静音时长（只对 transcribe 系列模型生效）。
+    commit_ms：whisper 没有 VAD，每积累这么久提交一次才会定稿。
     """
-    headers = {"Authorization": f"Bearer {api_key}"}
-    audio_input = {
+    session_update = _session_update(model, lecture_lang, silence_ms)
+    attempt = 0
+    while True:
+        try:
+            finished = await _one_session(
+                audio_queue, session_update, model, on_interim, on_final,
+                commit_ms=commit_ms, api_key=api_key, rotate_sec=rotate_sec,
+            )
+        except ConnectionClosed as exc:
+            finished = False
+            log.warning("[stt] upstream closed (%s); reconnecting", exc)
+        if finished:
+            return
+        attempt += 1
+        await asyncio.sleep(RECONNECT_DELAY_SEC)
+        log.info("[stt] opening new upstream session (#%d)", attempt + 1)
+
+
+def _session_update(model: str, lecture_lang: str, silence_ms: int) -> dict:
+    audio_input: dict = {
         "format": {"type": "audio/pcm", "rate": SAMPLE_RATE},
         "transcription": {"model": model, "language": lang_code(lecture_lang)},
     }
@@ -64,63 +99,57 @@ async def run_stt(
             "threshold": 0.5,
             "prefix_padding_ms": 300,
         }
-    session_update = {
-        "type": "session.update",
-        "session": {"type": "transcription", "audio": {"input": audio_input}},
-    }
+    return {"type": "session.update", "session": {"type": "transcription", "audio": {"input": audio_input}}}
 
+
+async def _one_session(
+    audio_queue: "asyncio.Queue[bytes | None]",
+    session_update: dict,
+    model: str,
+    on_interim: OnText,
+    on_final: OnText,
+    *,
+    commit_ms: int,
+    api_key: str,
+    rotate_sec: float,
+) -> bool:
+    """跑一条上游会话。返回 True = 用户停止（整体结束）；False = 该换一条新会话继续。"""
+    headers = {"Authorization": f"Bearer {api_key}"}
     async with connect(REALTIME_URL, additional_headers=headers, max_size=None) as ws:
         await ws.send(json.dumps(session_update))
-        log.info(f"[stt] connected model={model} lang={lecture_lang}")
-        stopped = asyncio.Event()
-        interim_buf = ""
+        log.info("[stt] connected model=%s", model)
+        stopped = asyncio.Event()  # 用户停止（队列收到 None）
+        flushed = asyncio.Event()  # 最近一次 commit 的 final 已回来
         stats = {"bytes": 0, "chunks": 0, "delta": 0, "final": 0, "peak": 0}
         # whisper 无 VAD：需按固定时长定期 commit 才会定稿；transcribe 走 VAD 自动 commit
         needs_commit = "whisper" in model
         commit_every = int(SAMPLE_RATE * 2 * (commit_ms / 1000.0))  # 字节
-        since_commit = 0
+        interim_buf = ""
+
+        async def commit() -> None:
+            await ws.send(json.dumps({"type": "input_audio_buffer.commit"}))
 
         async def sender() -> None:
-            nonlocal since_commit
+            since_commit = 0
             while True:
                 chunk = await audio_queue.get()
                 if chunk is None:
+                    flushed.clear()
                     try:
-                        await ws.send(json.dumps({"type": "input_audio_buffer.commit"}))
-                    except Exception:
+                        await commit()
+                    except ConnectionClosed:
                         pass
-                    break
+                    stopped.set()
+                    return
                 stats["bytes"] += len(chunk)
                 stats["chunks"] += 1
-                # 采样峰值：接近 0 说明静音(采集问题)，几千+说明有声音
-                try:
-                    a = array.array("h")
-                    a.frombytes(chunk)
-                    if a:
-                        p = max(abs(min(a)), abs(max(a)))
-                        if p > stats["peak"]:
-                            stats["peak"] = p
-                except Exception:
-                    pass
-                await ws.send(
-                    json.dumps(
-                        {
-                            "type": "input_audio_buffer.append",
-                            "audio": base64.b64encode(chunk).decode(),
-                        }
-                    )
-                )
-                # whisper：每积累 commit_ms 就提交一次，得到定期的定稿段落
+                stats["peak"] = max(stats["peak"], _peak(chunk))
+                await ws.send(json.dumps({"type": "input_audio_buffer.append", "audio": base64.b64encode(chunk).decode()}))
                 if needs_commit:
                     since_commit += len(chunk)
                     if since_commit >= commit_every:
                         since_commit = 0
-                        await ws.send(json.dumps({"type": "input_audio_buffer.commit"}))
-            log.info(
-                f"[stt] audio sent chunks={stats['chunks']} bytes={stats['bytes']} "
-                f"peak={stats['peak']}/32767"
-            )
-            stopped.set()
+                        await commit()
 
         async def reader() -> None:
             nonlocal interim_buf
@@ -139,21 +168,56 @@ async def run_stt(
                     if text:
                         stats["final"] += 1
                         await on_final(text)
+                    flushed.set()
                 elif "error" in tp:
-                    msg = (e.get("error") or {}).get("message", "OpenAI STT 错误")
-                    log.error(f"[stt] error event: {e.get('error')}")
-                    raise RuntimeError(msg)
+                    err = e.get("error") or {}
+                    if err.get("code") == "input_audio_buffer_commit_empty":
+                        flushed.set()  # 停止 / 轮换时缓冲恰好为空，没东西可定稿，不算错
+                        continue
+                    log.error("[stt] error event: %s", err)
+                    raise RuntimeError(err.get("message", "OpenAI STT 错误"))
                 elif tp in ("session.created", "session.updated"):
-                    log.info(f"[stt] {tp}")
+                    log.info("[stt] %s", tp)
 
         send_task = asyncio.create_task(sender())
         read_task = asyncio.create_task(reader())
-        await stopped.wait()
-        # 停止后 commit 冲刷的尾段 final 可能要几秒才回来（缓冲越长越久），给足时间
+        stop_task = asyncio.create_task(stopped.wait())
+        rotate_task = asyncio.create_task(asyncio.sleep(rotate_sec))
         try:
-            await asyncio.wait_for(asyncio.shield(read_task), timeout=10.0)
-        except asyncio.TimeoutError:
-            pass
-        log.info(f"[stt] done delta={stats['delta']} final={stats['final']}")
-        for tk in (read_task, send_task):
-            tk.cancel()
+            done, _ = await asyncio.wait(
+                {send_task, read_task, stop_task, rotate_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if read_task in done:
+                # 上游先结束：error 事件 → 抛出给上层；正常关闭 → 换新会话
+                exc = read_task.exception()
+                if exc is not None and not isinstance(exc, ConnectionClosed):
+                    raise exc
+                log.warning("[stt] upstream ended mid-session; will reconnect")
+                return False
+            if send_task in done and not stopped.is_set():
+                # 发送失败（多半是上游关了）→ 换新会话
+                exc = send_task.exception()
+                log.warning("[stt] sender stopped: %s; will reconnect", exc)
+                return False
+            finished = stopped.is_set()
+            if not finished:
+                # 主动轮换：先 commit 把手里的音频定稿
+                log.info("[stt] rotating upstream session before the 60-min limit")
+                flushed.clear()
+                try:
+                    await commit()
+                except ConnectionClosed:
+                    pass
+            # 等这次 commit 的 final 回来（缓冲越长越久），有上限
+            try:
+                await asyncio.wait_for(flushed.wait(), timeout=FLUSH_SEC)
+            except asyncio.TimeoutError:
+                log.warning("[stt] final did not arrive within %.0fs", FLUSH_SEC)
+            return finished
+        finally:
+            log.info(
+                "[stt] session done chunks=%d bytes=%d peak=%d/32767 delta=%d final=%d",
+                stats["chunks"], stats["bytes"], stats["peak"], stats["delta"], stats["final"],
+            )
+            for tk in (send_task, read_task, stop_task, rotate_task):
+                tk.cancel()

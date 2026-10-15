@@ -131,6 +131,11 @@ gcloud run deploy lectrace \
 
 `Dockerfile` 已把后端 + 前端 + 回放数据打进单容器，Cloud Run 注入的 `$PORT` 由 uvicorn 承接，WebSocket 长连接开箱可用。
 
+**整节课不中断的三道保险**（都已内置，不用配）：
+- OpenAI Realtime 单会话最长 60 分钟 → 后端每 50 分钟主动换一条上游会话（`OPENAI_STT_ROTATE_SEC`），上游意外断开也自动重连，音频在队列里不丢。
+- Cloud Run 单请求最长 60 分钟（部署时 `--timeout=3600`）→ 前端每 55 分钟主动换一条 WebSocket 续接同一 session。
+- 服务端每 20 秒发心跳 → 前端 45 秒没收到任何消息就判定死连接、自动重连。
+
 要在 Cloud Run 上开持久化，追加 `STORE_BACKEND=firestore,GCP_PROJECT=<项目>`，并确保运行时服务账号有 `roles/datastore.user`（访问 Firestore，无需 key 文件）。
 
 登录相关必须追加 `GOOGLE_CLIENT_ID=<client id>,SESSION_SECRET=<随机串>`：Cloud Run 上不会开本地开发登录，

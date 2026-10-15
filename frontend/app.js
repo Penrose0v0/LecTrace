@@ -238,6 +238,11 @@ const state = {
   conversationId: null, threadTitle: "",
 };
 const MAX_RECONNECT = 5;
+// 死连接检测：服务端每 20s 发 ping；这么久没收到任何消息就当连接已死，主动重连
+const WS_STALL_MS = 45000;
+// Cloud Run 单个请求最长 60 分钟：到这个时长主动换一条新连接（续接同一 session）
+const WS_ROTATE_MS = 55 * 60 * 1000;
+let lastWsMessageAt = 0;
 
 // ---------------- 语言检测 / 偏好本地缓存 ----------------
 // Google 已不在 ID token 里给账号语言，用浏览器语言代替（通常一致）
@@ -651,7 +656,11 @@ function startReplay() {
 // 转录消息统一处理（回放 + 麦克风共用）
 function onTranscriptMessage(ev) {
   if (typeof ev.data !== "string") return;
+  lastWsMessageAt = Date.now();
   const msg = JSON.parse(ev.data);
+  if (msg.type === "ping") return;
+  // 主动换连接后，旧连接只负责把尾段 final 送完；它的 end / session 等控制消息一律忽略
+  if (ev.target !== state.ws && msg.type !== "segment") return;
   if (msg.type === "session") {
     state.reconnectAttempts = 0;
     state.tBase = Number(msg.t_offset) || 0;
@@ -784,10 +793,33 @@ function setupAudioGraph() {
 function openMicWs() {
   const ws = new WebSocket(wsUrl());
   ws.binaryType = "arraybuffer";
+  ws.openedAt = Date.now();
+  lastWsMessageAt = Date.now();
   ws.onmessage = onTranscriptMessage;
   // 意外断开（含 60 分钟超时）→ 自动续接，无需用户操作
   ws.onclose = () => { if (state.transcribing) autoReconnect(); };
   state.ws = ws;
+}
+
+// 每 5s 检查一次麦克风连接：没消息太久 → 当作断开重连；连接太久 → 主动换一条
+setInterval(() => {
+  const ws = state.ws;
+  if (!state.transcribing || !isMic() || !ws || ws.readyState !== 1) return;
+  const now = Date.now();
+  if (now - lastWsMessageAt > WS_STALL_MS) {
+    console.warn("[ws] no message for", Math.round((now - lastWsMessageAt) / 1000), "s — reconnecting");
+    try { ws.close(); } catch (e) {}  // onclose → autoReconnect
+  } else if (now - (ws.openedAt || now) > WS_ROTATE_MS) {
+    rotateMicWs();
+  }
+}, 5000);
+
+// 主动换连接：让旧连接把尾段 final 发完后自然关闭，新连接续接同一 session
+function rotateMicWs() {
+  const old = state.ws;
+  if (old) { old.onclose = null; try { if (old.readyState === 1) old.send("stop"); } catch (e) {} }
+  state.reconnectAttempts = 0;
+  openMicWs();
 }
 
 function autoReconnect() {

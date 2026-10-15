@@ -35,6 +35,7 @@ def make_stt_runner(source: str, settings: Settings) -> STTRunner:
                 q, lang, on_interim, on_final,
                 api_key=settings.openai_api_key, model=settings.openai_stt_model,
                 silence_ms=settings.openai_stt_silence_ms, commit_ms=settings.openai_stt_commit_ms,
+                rotate_sec=settings.openai_stt_rotate_sec,
             )
 
         return runner

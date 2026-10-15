@@ -36,6 +36,8 @@ class Settings:
     openai_stt_silence_ms: int = int(os.getenv("OPENAI_STT_SILENCE_MS", "800"))
     # whisper 无 VAD，需定期 commit 才定稿；每多少毫秒提交一次
     openai_stt_commit_ms: int = int(os.getenv("OPENAI_STT_COMMIT_MS", "4000"))
+    # Realtime 单会话 60 分钟上限：提前多久主动换一条会话（秒）
+    openai_stt_rotate_sec: float = float(os.getenv("OPENAI_STT_ROTATE_SEC", str(50 * 60)))
 
     # Gemini（备选）
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")

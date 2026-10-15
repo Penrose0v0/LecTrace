@@ -126,6 +126,13 @@ async def _run_replay(ws: WebSocket, info: SessionInfo, cap: float | None) -> No
 
 # ---------------- 麦克风实时 STT ----------------
 STT_FLUSH_TIMEOUT = 15.0  # 停止后等 STT 把尾段 final 冲出来的时间
+PING_SEC = 20.0  # 心跳：让前端能发现"看起来还连着其实已经死了"的连接
+
+
+async def _heartbeat(ws: WebSocket) -> None:
+    while True:
+        await asyncio.sleep(PING_SEC)
+        await ws.send_json({"type": "ping"})
 
 
 async def _run_stt(ws: WebSocket, info: SessionInfo, cap: float | None) -> None:
@@ -177,6 +184,7 @@ async def _run_stt(ws: WebSocket, info: SessionInfo, cap: float | None) -> None:
     stt_task = asyncio.create_task(runner(audio_queue, info.lecture_language, on_interim, on_final))
     # 时长上限：到点视同客户端暂停，然后告诉前端是配额到了
     limit_task = asyncio.create_task(asyncio.sleep(max(0.0, cap - t_offset))) if cap is not None else None
+    ping_task = asyncio.create_task(_heartbeat(ws))
     waiters = {recv_task, stt_task} | ({limit_task} if limit_task else set())
     hit_limit = False
     try:
@@ -198,6 +206,7 @@ async def _run_stt(ws: WebSocket, info: SessionInfo, cap: float | None) -> None:
         if hit_limit:
             await _send(ws, _limit_msg(cap))
     finally:
+        ping_task.cancel()
         if limit_task is not None:
             limit_task.cancel()
         if recorder is not None:
