@@ -17,13 +17,9 @@ from ..config import Settings, get_settings
 from ..deps import SSE_HEADERS, get_store, sse
 from ..llm import LLMError
 from ..models import Card, CatchupRequest, ChatRequest, Conversation, SessionInfo, User
-from ..prompts import preset_message
+from ..prompts import format_transcript, preset_message
 
 router = APIRouter(prefix="/api", tags=["ai"])
-
-# 对话上下文用的转录窗口
-CHAT_CONTEXT_WINDOW_SEC = 1200.0
-CHAT_CONTEXT_MAX_CHARS = 6000
 
 
 async def _owned(session_id: str, user: User) -> SessionInfo:
@@ -50,13 +46,11 @@ async def _thread(session_id: str, conversation_id: str | None, title: str, crea
     return await store.create_conversation(session_id, title, created_t)
 
 
-async def _recent_transcript(session_id: str) -> str:
-    store = get_store()
-    now_t = await store.latest_t(session_id)
-    if now_t <= 0:
-        return ""
-    segs = await store.window(session_id, max(0.0, now_t - CHAT_CONTEXT_WINDOW_SEC), now_t)
-    return "\n".join(s.text for s in segs)[-CHAT_CONTEXT_MAX_CHARS:]
+async def _chat_transcript(info: SessionInfo, settings: Settings) -> tuple[str, float]:
+    """对话上下文：整节课从头到现在的转录（超长只留末尾）+ 当前课程时间。"""
+    segs = await get_store().all_segments(info.id)
+    now_t = segs[-1].t if segs else 0.0
+    return format_transcript(segs, settings.chat_context_max_chars, info.user_language), now_t
 
 
 @router.post("/catchup")
@@ -126,7 +120,11 @@ async def get_conversation(conversation_id: str, user: User = Depends(current_us
 async def chat(
     req: ChatRequest, user: User = Depends(current_user), settings: Settings = Depends(get_settings)
 ) -> StreamingResponse:
-    """结合最近转录的多轮对话。preset=explain 等快捷指令由服务端按用户语言生成消息。"""
+    """结合整节课转录的多轮对话。preset=explain 等快捷指令由服务端按用户语言生成消息。
+
+    每条消息记下发出时的课程时间 t，拼 prompt 时标在历史里，模型才分得清
+    「上次回答时老师讲到哪」和「现在讲到哪」。
+    """
     store = get_store()
     info = await _owned(req.session_id, user)
     _require_llm(settings)
@@ -138,21 +136,21 @@ async def chat(
     if not message:
         raise HTTPException(status_code=400, detail="消息为空。")
 
-    conv = await _thread(info.id, req.conversation_id, message[:24], await store.latest_t(info.id))
-    conv.messages.append({"role": "user", "content": message})
-    transcript = await _recent_transcript(info.id)
+    transcript, now_t = await _chat_transcript(info, settings)
+    conv = await _thread(info.id, req.conversation_id, message[:24], now_t)
+    conv.messages.append({"role": "user", "content": message, "t": now_t})
 
     async def gen():
         yield sse("meta", {"conversation_id": conv.id, "title": conv.title, "user_message": message})
         acc = ""
         try:
-            async for chunk in chat_stream(conv.messages, transcript, info, settings):
+            async for chunk in chat_stream(conv.messages, transcript, now_t, info, settings):
                 acc += chunk
                 yield sse(None, {"text": chunk})
         except LLMError as exc:
             yield sse("error", {"message": str(exc)})  # 失败不持久化这一轮
             return
-        conv.messages.append({"role": "assistant", "content": acc})
+        conv.messages.append({"role": "assistant", "content": acc, "t": now_t})
         await store.save_conversation(conv)
         yield sse("done", {})
 

@@ -9,7 +9,11 @@
 SILICONFLOW_API_KEY=你的key
 ```
 
-默认模型 `Qwen/Qwen3.5-122B-A10B`，请求里固定 `enable_thinking=false`（不关的话每次先推理几千字，Catch-up 等不起）。
+默认模型 `deepseek-ai/DeepSeek-V4-Flash`（2026-10 换的：`Qwen/Qwen3.5-122B-A10B` 长期 503 "System is too busy"）。
+Catch-up 和对话都固定 `enable_thinking=false`：开思考模型会把预算用满，首 token 20–80 秒，等不起。
+`CHAT_THINKING=1` 可给对话开思考（预算 `CHAT_THINKING_BUDGET`，默认 1024）。
+对话上下文是整节课的转录（`CHAT_CONTEXT_MAX_CHARS`，默认 4 万字，超了只留末尾）。
+注意 `zai-org/GLM-5.3-Flash` 不认 `enable_thinking=false`，别用。
 OpenAI / Gemini 的实现还在（`LLM_PROVIDER=openai|gemini`），只是暂不使用；麦克风转录仍走 OpenAI，所以 `OPENAI_API_KEY` 要保留。
 其余默认值即可（`replay` 转录源 + 内存存储）。
 

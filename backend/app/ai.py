@@ -19,7 +19,7 @@ async def summarize_stream(
     """最近 X 分钟的转录 → 摘要（逐块产出）。"""
     llm = get_llm(settings)
     messages = prompts.catchup_messages(segments, window_minutes, lecture)
-    # 只要一两句话；上限设小，既快又防止模型啰嗦
+    # 只要一两句话；上限设小，既快又防止模型啰嗦。永远不开思考，要秒回
     async for chunk in llm.stream(messages, max_tokens=160, temperature=0.3):
         yield chunk
 
@@ -27,11 +27,14 @@ async def summarize_stream(
 async def chat_stream(
     history: list[dict],
     transcript: str,
+    now_t: float,
     lecture: LectureMeta,
     settings: Settings,
 ) -> AsyncIterator[str]:
-    """基于对话历史 + 最近转录上下文，流式产出回复。"""
+    """基于对话历史 + 整节课转录上下文，流式产出回复。"""
     llm = get_llm(settings)
-    messages = prompts.chat_messages(history, transcript, lecture)
-    async for chunk in llm.stream(messages, max_tokens=1024, temperature=0.4):
+    messages = prompts.chat_messages(history, transcript, now_t, lecture)
+    async for chunk in llm.stream(
+        messages, max_tokens=1500, temperature=0.4, thinking=settings.chat_thinking
+    ):
         yield chunk

@@ -11,7 +11,9 @@ from dotenv import load_dotenv
 # 仓库根目录：backend/app/config.py -> parents[2]
 ROOT_DIR = Path(__file__).resolve().parents[2]
 
-load_dotenv(ROOT_DIR / ".env")
+# 本地让 .env 覆盖进程环境：uvicorn --reload 的 worker 会继承首次加载时的环境变量，
+# 不覆盖的话改了 .env 要完整重启才生效。Cloud Run 上没有 .env，环境变量以平台配置为准
+load_dotenv(ROOT_DIR / ".env", override=not os.getenv("K_SERVICE"))
 
 
 class Settings:
@@ -21,7 +23,8 @@ class Settings:
 
     # SiliconFlow（默认；OpenAI 兼容协议）
     siliconflow_api_key: str = os.getenv("SILICONFLOW_API_KEY", "")
-    siliconflow_model: str = os.getenv("SILICONFLOW_MODEL", "Qwen/Qwen3.5-122B-A10B")
+    # 2026-10 实测：Qwen3.5-122B-A10B 长期 503；DeepSeek-V4-Flash 首 token 1–2s，不开思考也能按规则答题
+    siliconflow_model: str = os.getenv("SILICONFLOW_MODEL", "deepseek-ai/DeepSeek-V4-Flash")
     siliconflow_base_url: str = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
 
     # OpenAI（备选；实时转录 openai-stt 仍用这个 key）
@@ -42,6 +45,16 @@ class Settings:
     # Gemini（备选）
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+    # ---- AI 对话 ----
+    # 对话是否允许模型先推理再作答（Catch-up 永远不开）。默认关：实测开了首 token 要 20–80 秒，
+    # 因为模型会把思考预算用满；关掉后 1–2 秒，prompt 写清楚规则后质量够用
+    chat_thinking: bool = os.getenv("CHAT_THINKING", "0").lower() in ("1", "true", "yes")
+    # 思考预算（token），仅 CHAT_THINKING=1 时生效
+    chat_thinking_budget: int = int(os.getenv("CHAT_THINKING_BUDGET", "1024"))
+    # 对话上下文里放多少转录（字符）。整节课从头到现在都给，超了只保留末尾。
+    # 实测 Google STT 日语课约 250–350 字/分钟，105 分钟 ≈ 3.5 万字，默认值能装下一整节
+    chat_context_max_chars: int = int(os.getenv("CHAT_CONTEXT_MAX_CHARS", "40000"))
     # 讲义语言（转录内容的语言，默认日语）
     lecture_language: str = os.getenv("LECTURE_LANGUAGE", "ja")
     # 用户语言（摘要输出语言，默认日语）

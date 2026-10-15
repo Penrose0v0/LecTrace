@@ -20,8 +20,10 @@ def get_llm(settings: Settings) -> LLMProvider:
             settings.siliconflow_api_key, settings.siliconflow_model, settings.siliconflow_base_url,
             name="siliconflow",
             max_tokens_param="max_tokens",
-            # Qwen3 系列默认带 thinking，会先推理几千字再作答；Catch-up 要秒回，关掉
+            # Qwen3 系列默认带 thinking，会先推理几千字再作答；Catch-up 要秒回，关掉。
+            # 对话（thinking=True）允许想一下，但给个预算别无限推理。
             extra={"enable_thinking": False},
+            thinking_extra={"enable_thinking": True, "thinking_budget": settings.chat_thinking_budget},
         )
     if p == "openai":
         if not settings.openai_api_key:
@@ -34,7 +36,9 @@ def get_llm(settings: Settings) -> LLMProvider:
             raise LLMError("GEMINI_API_KEY 未配置。")
         from .gemini import GeminiProvider
 
-        return GeminiProvider(settings.gemini_api_key, settings.gemini_model)
+        return GeminiProvider(
+            settings.gemini_api_key, settings.gemini_model, thinking_budget=settings.chat_thinking_budget
+        )
     raise LLMError(f"未知 LLM_PROVIDER: {p}")
 
 
