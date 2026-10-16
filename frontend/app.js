@@ -441,10 +441,8 @@ function renderProfile() {
   const q = state.quota;
   $("adminLink").classList.toggle("hidden", !!q);  // quota 为空 = 管理员，不受限
   $("profileQuota").classList.toggle("hidden", !q);
-  if (q) $("profileQuota").textContent = t("quotaLine")(
-    q.lectures_today, q.max_lectures_per_day ?? "∞", q.max_lecture_minutes ?? "∞",
-    q.chats_today ?? 0, q.max_chats_per_day ?? "∞",
-  );
+  // 对话的每日上限故意不显示：让用户放开用，真到上限时气泡里再提示
+  if (q) $("profileQuota").textContent = t("quotaLine")(q.lectures_today, q.max_lectures_per_day ?? "∞", q.max_lecture_minutes ?? "∞");
 }
 
 async function loadDemoSessions() {
