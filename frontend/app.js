@@ -24,6 +24,7 @@ const I18N = {
     emptyOpened: "まだ文字起こしがありません。",
     recStart: "開始", recPause: "一時停止", recResume: "再開",
     stIdle: "", stConnecting: "接続中…", stReconnecting: "再接続中…", stRequestMic: "マイクを要求中…",
+    stReconnectFailed: "再接続に失敗しました。「続ける」を押してください",
     stMicDenied: "マイクが使えません", stStopped: "一時停止",
     stError: (m) => `エラー：${m}`, stLive: "", stReplay: (s) => `${s}× 再生`,
     tellMe: "Tell me", newThread: "新しいスレッド", threadsEmpty: "このスレッド以外はまだありません",
@@ -70,6 +71,7 @@ const I18N = {
     emptyOpened: "这节课还没有转录内容。",
     recStart: "开始", recPause: "暂停", recResume: "继续",
     stIdle: "", stConnecting: "连接中…", stReconnecting: "重连中…", stRequestMic: "正在请求麦克风…",
+    stReconnectFailed: "多次重连失败，请按「继续」",
     stMicDenied: "无法使用麦克风", stStopped: "已暂停",
     stError: (m) => `错误：${m}`, stLive: "", stReplay: (s) => `${s}× 回放`,
     tellMe: "Tell me", newThread: "新线程", threadsEmpty: "还没有其他线程",
@@ -116,6 +118,7 @@ const I18N = {
     emptyOpened: "No transcript yet for this lecture.",
     recStart: "Start", recPause: "Pause", recResume: "Resume",
     stIdle: "", stConnecting: "Connecting…", stReconnecting: "Reconnecting…", stRequestMic: "Requesting mic…",
+    stReconnectFailed: "Reconnect failed. Press Continue to resume",
     stMicDenied: "Microphone unavailable", stStopped: "Paused",
     stError: (m) => `Error: ${m}`, stLive: "", stReplay: (s) => `${s}× replay`,
     tellMe: "Tell me", newThread: "New thread", threadsEmpty: "No other threads yet",
@@ -745,27 +748,36 @@ function onTranscriptMessage(ev) {
   // 主动换连接后，旧连接只负责把尾段 final 送完；它的 end / session 等控制消息一律忽略
   if (ev.target !== state.ws && msg.type !== "segment") return;
   if (msg.type === "session") {
-    state.reconnectAttempts = 0;
     state.tBase = Number(msg.t_offset) || 0;
     state.wallStart = Date.now();
     if (msg.source === "replay") setStatus("stReplay", { param: msg.speed, live: true });
     else setStatus("stLive", { live: true });
     renderAll();
   } else if (msg.type === "interim") {
+    state.reconnectAttempts = 0;  // 真正识别出东西了才算连接健康（session 消息一连上就有，不算）
     showInterim(msg.text);
   } else if (msg.type === "segment") {
+    state.reconnectAttempts = 0;
     appendSegment(msg.text, msg.t, true);
     if (state.session) state.session.segment_count = (state.session.segment_count || 0) + 1;
     renderQuick();
   } else if (msg.type === "end") {
-    // 回放放完 / 服务端收尾：进入暂停态（随时可继续）
-    if (state.transcribing) enterPaused();
+    // 回放放完 / 服务端收尾：进入暂停态（随时可继续）。出错后的 end 不算：等 onclose 自动重连
+    if (state.transcribing && !ev.target.errored) enterPaused();
   } else if (msg.type === "limit") {
     // 配额：这节课到时长上限了，停在暂停态并提示
     enterPaused();
     setStatus("stLimit", { param: msg.limit, err: true });
     showNotice(t("noticeLimit")(msg.limit));
   } else if (msg.type === "error") {
+    // 麦克风模式下服务端出错（STT 瞬时故障等）：不停下来，当作意外断开自动续接，
+    // 超过 MAX_RECONNECT 次才进入暂停态并显示错误。回放 / 未在转录时照旧停下
+    if (state.transcribing && isMic() && state.reconnectAttempts < MAX_RECONNECT) {
+      console.warn("[ws] server error, will reconnect:", msg.message);
+      ev.target.errored = true;
+      setStatus("stReconnecting");
+      return;
+    }
     enterPaused();
     setStatus("stError", { param: msg.message, err: true });
   }
@@ -908,9 +920,15 @@ function rotateMicWs() {
 
 function autoReconnect() {
   state.reconnectAttempts++;
-  if (state.reconnectAttempts > MAX_RECONNECT) { enterPaused(); return; }
+  if (state.reconnectAttempts > MAX_RECONNECT) {
+    enterPaused();
+    setStatus("stError", { param: t("stReconnectFailed"), err: true });
+    return;
+  }
   setStatus("stReconnecting");
-  openMicWs();
+  // 退避：1s、2s、4s、8s、8s。服务端那边出错也在自己重试，别一秒内连着撞
+  const delay = Math.min(1000 * 2 ** (state.reconnectAttempts - 1), 8000);
+  setTimeout(() => { if (state.transcribing && isMic()) openMicWs(); }, delay);
 }
 
 // ---- 转录渲染 ----
