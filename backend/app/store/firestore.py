@@ -221,10 +221,10 @@ class FirestoreStore:
         return out
 
     async def list_user_days(self, user_id: str, limit: int) -> list[dict]:
-        # 文档 id 就是日期，按 id 倒序即按日期倒序，不需要索引
+        # 按 day 字段倒序（单字段倒序有自动索引）。按 __name__ 倒序看似等价，但 Firestore 要求手建索引
         q = (
             self._user(user_id).collection("days")
-            .order_by("__name__", direction=firestore.Query.DESCENDING)
+            .order_by("day", direction=firestore.Query.DESCENDING)
             .limit(limit)
         )
         return [{"day": snap.id, **(snap.to_dict() or {})} async for snap in q.stream()]
