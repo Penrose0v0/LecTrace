@@ -88,7 +88,8 @@ const COLS = [
   { key: "first_login_at", label: "首次登录", get: (u) => u.first_login_at || 0, render: (u) => date(u.first_login_at) },
   { key: "login_count", label: "登录", get: (u) => u.login_count || 0, render: (u) => num(u.login_count) },
   { key: "lectures", label: "课堂", get: (u) => u.usage.lectures, render: (u) => num(u.usage.lectures) },
-  { key: "stt_seconds", label: "转录", get: (u) => u.usage.stt_seconds, render: (u) => dur(u.usage.stt_seconds) },
+  { key: "stt_seconds", label: "转录", get: (u) => sttSec(u.usage),
+    render: (u) => dur(sttSec(u.usage)) + (u.usage.stt_v2_seconds && u.usage.stt_seconds ? ` <span class="dim">(v2 ${dur(u.usage.stt_v2_seconds)})</span>` : "") },
   { key: "catchups", label: "Catch-up", get: (u) => u.usage.catchups, render: (u) => num(u.usage.catchups) },
   { key: "chats", label: "对话", get: (u) => u.usage.chats, render: (u) => num(u.usage.chats) },
   { key: "llm_in_tokens", label: "输入 tok", get: (u) => u.usage.llm_in_tokens, render: (u) => tok(u.usage.llm_in_tokens) },
@@ -97,6 +98,7 @@ const COLS = [
     render: (u) => money(u.usage.llm_cost + u.usage.stt_cost) + ` <span class="dim">(${money(u.usage.stt_cost)} + ${money(u.usage.llm_cost)})</span>` },
 ];
 
+const sttSec = (u) => (u.stt_seconds || 0) + (u.stt_v2_seconds || 0);  // v1/OpenAI + Google v2
 function esc(s) { return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function num(n) { return n ? Math.round(n).toLocaleString() : '<span class="dim">0</span>'; }
 function tok(n) { if (!n) return '<span class="dim">0</span>'; return n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n); }
@@ -144,13 +146,13 @@ function render() {
   const t = data.totals, p = data.pricing, q = data.quota;
   $("meta").textContent =
     `${data.users.length} 个用户 · 今天 ${data.today} · 模型 ${p.llm_model || "?"} · ` +
-    `单价 输入 ${p.llm_input_per_m}/M · 输出 ${p.llm_output_per_m}/M · 转录 ${p.stt_per_min}/分 (${data.currency}) · ` +
+    `单价 输入 ${p.llm_input_per_m}/M · 输出 ${p.llm_output_per_m}/M · 转录 v1 ${p.stt_per_min}/分 · v2 ${p.stt_v2_per_min}/分 (${data.currency}) · 默认来源 ${p.stt_source} · ` +
     `免费配额 ${q.max_lecture_minutes ?? "∞"} 分/节 · ${q.max_lectures_per_day ?? "∞"} 节/天 · ${q.max_chats_per_day ?? "∞"} 条对话/天`;
   const active = data.users.filter((u) => (u.last_seen_at || 0) > Date.now() / 1000 - 7 * 86400).length;
   $("cards").innerHTML = [
     ["用户", data.users.length, `${active} 人 7 天内活跃`],
     ["课堂", num(t.lectures), ""],
-    ["转录时长", dur(t.stt_seconds), money(t.stt_cost)],
+    ["转录时长", dur(sttSec(t)), money(t.stt_cost)],
     ["Catch-up", num(t.catchups), ""],
     ["对话", num(t.chats), ""],
     ["LLM token", `${tok(t.llm_in_tokens)} <span class="dim">in</span> · ${tok(t.llm_out_tokens)} <span class="dim">out</span>`, money(t.llm_cost)],
@@ -189,7 +191,7 @@ async function loadDetail(id) {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
     const days = d.days.map((x) =>
-      `<tr><td>${esc(x.day)}</td><td>${num(x.lectures)}</td><td>${dur(x.stt_seconds)}</td><td>${num(x.catchups)}</td><td>${num(x.chats)}</td><td>${tok(x.llm_in_tokens)}</td><td>${tok(x.llm_out_tokens)}</td><td>${money(x.stt_cost + x.llm_cost)}</td></tr>`
+      `<tr><td>${esc(x.day)}</td><td>${num(x.lectures)}</td><td>${dur(sttSec(x))}</td><td>${num(x.catchups)}</td><td>${num(x.chats)}</td><td>${tok(x.llm_in_tokens)}</td><td>${tok(x.llm_out_tokens)}</td><td>${money(x.stt_cost + x.llm_cost)}</td></tr>`
     ).join("") || `<tr><td colspan="8" class="dim">无</td></tr>`;
     const evs = d.events.map((e) => {
       const when = new Date((e.ts || 0) * 1000).toLocaleString();

@@ -1,6 +1,6 @@
 """转录源：
 
-- 实时 STT（麦克风）：openai-stt / google-stt，统一签名
+- 实时 STT（麦克风）：openai-stt / google-stt（v1）/ google-stt-v2（Chirp 3），统一签名
   `run_stt(audio_queue, lecture_lang, on_interim, on_final)`，由 `make_stt_runner` 按配置绑好参数。
 - 回放：ReplaySource 按原时间轴（加速）重放归档 session。
 """
@@ -43,6 +43,17 @@ def make_stt_runner(source: str, settings: Settings) -> STTRunner:
         from .google_stt import run_stt as google_run
 
         return google_run
+    if source == "google-stt-v2":
+        from .google_stt_v2 import run_stt as google_v2_run
+
+        async def runner_v2(q, lang, on_interim, on_final):
+            await google_v2_run(
+                q, lang, on_interim, on_final,
+                project=settings.gcp_project,
+                location=settings.google_stt_v2_location, model=settings.google_stt_v2_model,
+            )
+
+        return runner_v2
     raise ValueError(f"未知转录来源: {source}")
 
 

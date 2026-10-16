@@ -6,9 +6,10 @@
   users/{uid}/events/{id} 每次 LLM 调用 / 每段转录连接的明细
 
 usage 字段都是累加数：
-  logins, lectures, stt_seconds, stt_cost, catchups, chats,
+  logins, lectures, stt_seconds（v1 / OpenAI）, stt_v2_seconds（Google v2）, stt_cost, catchups, chats,
   llm_calls, llm_in_tokens, llm_out_tokens, llm_cost
-成本按 .env 里的单价估算（LLM_PRICE_*、STT_PRICE_PER_MIN），没配就是 0；货币只是个标签。
+成本按 .env 里的单价估算（LLM_PRICE_*、STT_PRICE_PER_MIN、STT_V2_PRICE_PER_MIN），没配就是 0；货币只是个标签。
+后台展示时按当前单价由 token / 秒数重算（routes/admin.py），这里存的 cost 只是记录当时的值。
 """
 
 from __future__ import annotations
@@ -26,9 +27,17 @@ from .store import Store
 log = logging.getLogger("lectrace.usage")
 
 USAGE_FIELDS = (
-    "logins", "lectures", "stt_seconds", "stt_cost",
+    "logins", "lectures", "stt_seconds", "stt_v2_seconds", "stt_cost",
     "catchups", "chats", "llm_calls", "llm_in_tokens", "llm_out_tokens", "llm_cost",
 )
+
+
+def stt_seconds_field(source: str) -> str:
+    return "stt_v2_seconds" if source == "google-stt-v2" else "stt_seconds"
+
+
+def stt_price_per_min(source: str, settings: Settings) -> float:
+    return settings.stt_v2_price_per_min if source == "google-stt-v2" else settings.stt_price_per_min
 
 
 def day_key(settings: Settings, ts: float | None = None) -> str:
@@ -44,8 +53,8 @@ def llm_cost(usage: LLMUsage, settings: Settings) -> float:
     ) / 1_000_000
 
 
-def stt_cost(seconds: float, settings: Settings) -> float:
-    return seconds / 60.0 * settings.stt_price_per_min
+def stt_cost(seconds: float, source: str, settings: Settings) -> float:
+    return seconds / 60.0 * stt_price_per_min(source, settings)
 
 
 async def _add(store: Store, user_id: str, settings: Settings, fields: dict, event: dict | None) -> None:
@@ -77,10 +86,10 @@ async def record_stt(
 ) -> None:
     if seconds <= 0:
         return
-    cost = stt_cost(seconds, settings)
+    cost = stt_cost(seconds, source, settings)
     await _add(
         store, user.id, settings,
-        {"stt_seconds": seconds, "stt_cost": cost},
+        {stt_seconds_field(source): seconds, "stt_cost": cost},
         {"kind": "stt", "session_id": session_id, "source": source, "seconds": round(seconds, 1), "cost": cost},
     )
 

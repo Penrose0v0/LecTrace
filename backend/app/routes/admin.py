@@ -12,7 +12,7 @@ from ..auth import current_user
 from ..config import Settings, get_settings
 from ..deps import get_store
 from ..models import User
-from ..usage import USAGE_FIELDS, day_key
+from ..usage import USAGE_FIELDS, day_key, stt_price_per_min
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -34,13 +34,16 @@ def _fill(u: dict, settings: Settings) -> dict:
         out["llm_in_tokens"] * settings.llm_price_input_per_m
         + out["llm_out_tokens"] * settings.llm_price_output_per_m
     ) / 1_000_000
-    out["stt_cost"] = out["stt_seconds"] / 60.0 * settings.stt_price_per_min
+    out["stt_cost"] = (
+        out["stt_seconds"] / 60.0 * settings.stt_price_per_min
+        + out["stt_v2_seconds"] / 60.0 * settings.stt_v2_price_per_min
+    )
     return out
 
 
 def _reprice_event(e: dict, settings: Settings) -> dict:
     if e.get("kind") == "stt":
-        cost = float(e.get("seconds") or 0) / 60.0 * settings.stt_price_per_min
+        cost = float(e.get("seconds") or 0) / 60.0 * stt_price_per_min(e.get("source") or "", settings)
     else:
         cost = (
             (e.get("in_tokens") or 0) * settings.llm_price_input_per_m
@@ -65,7 +68,9 @@ async def list_users(_: User = Depends(admin_user), settings: Settings = Depends
             "llm_input_per_m": settings.llm_price_input_per_m,
             "llm_output_per_m": settings.llm_price_output_per_m,
             "stt_per_min": settings.stt_price_per_min,
+            "stt_v2_per_min": settings.stt_v2_price_per_min,
             "llm_model": settings.llm_model,
+            "stt_source": settings.transcription_source,
         },
         "quota": {
             "max_lecture_minutes": settings.quota_max_lecture_minutes or None,

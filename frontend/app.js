@@ -16,7 +16,7 @@ const I18N = {
     metaNote: "すべて任意。タイトルや説明は、AI が講義の文脈を理解する手がかりになります。",
     fLectureLang: "講義の言語", fUserLang: "あなたの言語",
     fWindow: "Catch-up の範囲", fSource: "音声ソース", fFile: "アーカイブ", minUnit: "分",
-    srcOpenai: "マイク · OpenAI", srcGoogle: "マイク · Google", srcReplay: "アーカイブ再生",
+    srcOpenai: "マイク · OpenAI", srcGoogle: "マイク · Google (v1)", srcGoogleV2: "マイク · Google Chirp 3", srcReplay: "アーカイブ再生",
     titlePh: "無題の講義", descPh: "説明やメモ（任意）",
     hintNew: "● を押すとすぐ始まります。このパネルは自動で閉じます。",
     hintLive: "変更は自動で保存されます。音声ソースは開始後に変更できません。",
@@ -63,7 +63,7 @@ const I18N = {
     metaNote: "全部可选。标题和描述能帮助 AI 理解这节课的上下文。",
     fLectureLang: "讲义语言", fUserLang: "你的语言",
     fWindow: "Catch-up 范围", fSource: "音频来源", fFile: "归档文件", minUnit: "分钟",
-    srcOpenai: "麦克风 · OpenAI", srcGoogle: "麦克风 · Google", srcReplay: "回放归档",
+    srcOpenai: "麦克风 · OpenAI", srcGoogle: "麦克风 · Google (v1)", srcGoogleV2: "麦克风 · Google Chirp 3", srcReplay: "回放归档",
     titlePh: "未命名课堂", descPh: "描述或备注（可选）",
     hintNew: "按 ● 立即开始，面板会自动收起。",
     hintLive: "改动会自动保存。开始后不能更换音频来源。",
@@ -110,7 +110,7 @@ const I18N = {
     metaNote: "Everything is optional. Title and description help the AI understand the lecture's context.",
     fLectureLang: "Lecture language", fUserLang: "Your language",
     fWindow: "Catch-up window", fSource: "Audio source", fFile: "Archive file", minUnit: "min",
-    srcOpenai: "Microphone · OpenAI", srcGoogle: "Microphone · Google", srcReplay: "Replay archive",
+    srcOpenai: "Microphone · OpenAI", srcGoogle: "Microphone · Google (v1)", srcGoogleV2: "Microphone · Google Chirp 3", srcReplay: "Replay archive",
     titlePh: "Untitled lecture", descPh: "Description or notes (optional)",
     hintNew: "Press ● to start right away — this panel closes by itself.",
     hintLive: "Changes save automatically. The audio source can't change after starting.",
@@ -516,7 +516,7 @@ async function newLecture() {
   setSheet(true);
   renderAll();
   fetch("/api/health").then((r) => r.json()).then((h) => {
-    if (!state.session && ["openai-stt", "google-stt", "replay"].includes(h.transcription_source)) {
+    if (!state.session && ["openai-stt", "google-stt", "google-stt-v2", "replay"].includes(h.transcription_source)) {
       if (h.transcription_source !== "replay" || state.demoSessions.length) state.meta.source = h.transcription_source;
       renderMetaForm();
     }

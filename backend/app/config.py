@@ -61,8 +61,12 @@ class Settings:
     user_language: str = os.getenv("USER_LANGUAGE", "ja")
 
     # ---- 转录源 ----
-    # 新建课堂的默认音频来源：google-stt（默认）/ openai-stt / replay（本地回放归档）
+    # 新建课堂的默认音频来源：google-stt（v1 default）/ google-stt-v2（Chirp 3）/ openai-stt / replay（本地回放归档）
     transcription_source: str = os.getenv("TRANSCRIPTION_SOURCE", "google-stt")
+    # Google STT v2：区域 + 模型。chirp_3 的日语 2026-10 只在 us / eu 可用（asia-northeast1 拒绝），
+    # 音频会送去该区域处理。recognizer 用隐式 "_"，项目 ID 取 GCP_PROJECT
+    google_stt_v2_location: str = os.getenv("GOOGLE_STT_V2_LOCATION", "us")
+    google_stt_v2_model: str = os.getenv("GOOGLE_STT_V2_MODEL", "chirp_3")
     # 归档数据目录（回放用）
     demo_data_dir: Path = ROOT_DIR / os.getenv("DEMO_DATA_DIR", "_archive/data")
     # 回放加速倍率：8 表示 1 小时讲义 ~7.5 分钟放完
@@ -112,8 +116,9 @@ class Settings:
     # LLM 单价：每百万 token（输入 / 输出），按 LLM_PROVIDER 当前模型填
     llm_price_input_per_m: float = float(os.getenv("LLM_PRICE_INPUT_PER_M", "0"))
     llm_price_output_per_m: float = float(os.getenv("LLM_PRICE_OUTPUT_PER_M", "0"))
-    # 语音转录单价：每分钟。Google STT v1 标准模型约 0.024 USD/分
+    # 语音转录单价：每分钟。Google STT v1 标准模型 0.024 USD/分；v2（Chirp 3 等）0.016 USD/分
     stt_price_per_min: float = float(os.getenv("STT_PRICE_PER_MIN", "0.024"))
+    stt_v2_price_per_min: float = float(os.getenv("STT_V2_PRICE_PER_MIN", "0.016"))
     # 只是显示用的货币标签，所有单价得用同一种货币
     cost_currency: str = os.getenv("COST_CURRENCY", "USD")
     # 本地开发免 Google 登录：未配置 client id 且不在 Cloud Run 上时自动开启，

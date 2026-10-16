@@ -42,6 +42,20 @@ OpenAI / Gemini 的实现还在（`LLM_PROVIDER=openai|gemini`），只是暂不
 
 > 调回放速度：改 `.env` 的 `REPLAY_SPEED`（越大越快），或前端 WS 带 `?speed=`。
 
+## 一·二、Google 转录：v1 与 v2 Chirp 3
+
+两个 Google 来源并存，课堂设置里可选，`TRANSCRIPTION_SOURCE` 决定新建课堂的默认值：
+
+| 来源 | API / 模型 | 价格 | 处理区域 | 特点 |
+|---|---|---|---|---|
+| `google-stt` | v1 default | 0.024 USD/分 | 就近（Tokyo） | interim 很密，实时预览流畅；句子偶有碎 |
+| `google-stt-v2` | v2 `chirp_3` | 0.016 USD/分 | `GOOGLE_STT_V2_LOCATION`，默认 `us` | 转录更通顺、带口语填充词；interim 很稀（只在 final 前几秒出现），final 在自然停顿处每 3–12 秒一条 |
+
+2026-10 实测 chirp_3 的日语在 asia-northeast1 被拒（"no longer generally available in region"），只有 us / eu 可用，
+所以默认送到美国处理；Tokyo 区域的 v2 只有 `long` / `short` / `telephony`（`GOOGLE_STT_V2_MODEL=long` 可在 Tokyo 跑）。
+两版共用 `transcription/google_stream.py` 的流管理：4 分钟主动换流、流中途出错自动重开（连续 4 次失败才报错）。
+v2 的 recognizer 用隐式 `projects/{GCP_PROJECT}/locations/{区域}/recognizers/_`，不用预建，运行账号有 Speech 权限即可。
+
 ## 一·三、Google 登录
 
 本地开发可以一直用「本地开发登录」。要用真实 Google 账号（线上必须）：
@@ -81,12 +95,14 @@ OpenAI / Gemini 的实现还在（`LLM_PROVIDER=openai|gemini`），只是暂不
 数据怎么来的（`backend/app/usage.py`）：
 
 - 登录 / 刷新页面 → `users/{uid}` 写入 email、name、picture、`last_seen_at`；真正登录还加 `login_count`、`first/last_login_at`。
-- 转录 WebSocket 断开 → 本次收音秒数累加到 `stt_seconds`（暂停期间不连，不算；回放来源不走 STT，不记）。
+- 转录 WebSocket 断开 → 本次收音秒数累加到 `stt_seconds`（v1 / OpenAI）或 `stt_v2_seconds`（Google v2），
+  暂停期间不连，不算；回放来源不走 STT，不记。
 - 每次 Catch-up / 对话成功 → 从流式响应末尾取 `usage`（OpenAI 协议加了 `stream_options.include_usage`；Gemini 读 `usageMetadata`）累加 token。
 - 累计写在 `users/{uid}.usage`，当日写在 `users/{uid}/days/{YYYY-MM-DD}`（对话配额就从这里数），明细在 `users/{uid}/events`。
 
 成本估算只是乘单价：`LLM_PRICE_INPUT_PER_M` / `LLM_PRICE_OUTPUT_PER_M`（每百万 token）、`STT_PRICE_PER_MIN`
-（Google STT v1 标准模型约 0.024 USD/分），货币标签 `COST_CURRENCY`。LLM 单价默认 0，换模型后记得改；
+（Google STT v1 标准模型 0.024 USD/分）、`STT_V2_PRICE_PER_MIN`（v2 Chirp 3 等 0.016 USD/分），货币标签
+`COST_CURRENCY`。后台按**当前**单价重算历史 token / 秒数，所以补填或调价后旧数据也立刻对。LLM 单价默认 0，换模型后记得改；
 真实账单以 GCP / SiliconFlow 控制台为准，这里只能分到人头做参考。
 
 ## 一·五、启用 Firestore 持久化（可选）
@@ -184,7 +200,7 @@ backend/app/
 ├── ai.py              摘要 / 对话服务层：prompts → llm
 ├── llm/               LLM_PROVIDER 可插拔：base（协议 + SSE 工具）/ openai / gemini
 ├── store/             STORE_BACKEND 可插拔：base（协议）/ memory / firestore，含会话、段落、卡片、对话、偏好
-├── transcription/     replay / openai_stt / google_stt + make_stt_runner 工厂
+├── transcription/     replay / openai_stt / google_stt（v1）/ google_stt_v2（Chirp 3）/ google_stream（共用流管理）+ make_stt_runner 工厂
 └── routes/            auth / lectures / ai（catchup + chat）/ transcribe（WebSocket）
 ```
 
