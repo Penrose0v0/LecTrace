@@ -23,16 +23,37 @@ def admin_user(user: User = Depends(current_user), settings: Settings = Depends(
     return user
 
 
-def _fill(u: dict) -> dict:
-    """usage 缺的字段补 0，前端省得判空。"""
-    return {k: u.get(k, 0) for k in USAGE_FIELDS}
+def _fill(u: dict, settings: Settings) -> dict:
+    """usage 缺的字段补 0，前端省得判空；成本按当前单价由 token / 秒数现算。
+
+    记录时存的 llm_cost / stt_cost 用的是当时的单价（单价没配就是 0），后台展示以现在的 .env 为准，
+    这样补填或调整单价后历史数据也立刻对得上。换模型后老数据会按新价算，只是估算，够用。
+    """
+    out = {k: u.get(k, 0) for k in USAGE_FIELDS}
+    out["llm_cost"] = (
+        out["llm_in_tokens"] * settings.llm_price_input_per_m
+        + out["llm_out_tokens"] * settings.llm_price_output_per_m
+    ) / 1_000_000
+    out["stt_cost"] = out["stt_seconds"] / 60.0 * settings.stt_price_per_min
+    return out
+
+
+def _reprice_event(e: dict, settings: Settings) -> dict:
+    if e.get("kind") == "stt":
+        cost = float(e.get("seconds") or 0) / 60.0 * settings.stt_price_per_min
+    else:
+        cost = (
+            (e.get("in_tokens") or 0) * settings.llm_price_input_per_m
+            + (e.get("out_tokens") or 0) * settings.llm_price_output_per_m
+        ) / 1_000_000
+    return {**e, "cost": cost}
 
 
 @router.get("/users")
 async def list_users(_: User = Depends(admin_user), settings: Settings = Depends(get_settings)) -> dict:
     users = await get_store().list_users()
     for u in users:
-        u["usage"] = _fill(u.get("usage") or {})
+        u["usage"] = _fill(u.get("usage") or {}, settings)
         u["is_admin"] = (u.get("email") or "").lower() in settings.admin_emails
     totals = {k: sum(u["usage"][k] for u in users) for k in USAGE_FIELDS}
     return {
@@ -58,11 +79,16 @@ async def list_users(_: User = Depends(admin_user), settings: Settings = Depends
 async def user_detail(
     user_id: str,
     _: User = Depends(admin_user),
+    settings: Settings = Depends(get_settings),
     days: int = Query(default=30, ge=1, le=366),
     events: int = Query(default=50, ge=0, le=500),
 ) -> dict:
     store = get_store()
     return {
-        "days": [{**_fill(d), "day": d.get("day", "")} for d in await store.list_user_days(user_id, days)],
-        "events": await store.list_user_events(user_id, events) if events else [],
+        "days": [
+            {**_fill(d, settings), "day": d.get("day", "")} for d in await store.list_user_days(user_id, days)
+        ],
+        "events": [
+            _reprice_event(e, settings) for e in (await store.list_user_events(user_id, events) if events else [])
+        ],
     }
