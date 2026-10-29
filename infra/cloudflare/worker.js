@@ -1,47 +1,68 @@
 /**
- * LecTrace 前置代理：lectrace.app → Cloud Run。
+ * LecTrace 前置代理：lectrace.app → Cloud Run。以线上版本为基础，为域名迁移加了两处：
+ *   1. X-Proxy-Auth：共享密钥，后端只在它正确时才信任 X-Forwarded-Host（客户端直连 run.app 伪造无效）。
+ *      客户端自带的同名头一律覆盖 / 删除。
+ *   2. /api、/ws、/auth 响应加 Cache-Control: no-store，迁移票据的跳转不能被缓存。
+ * 其余不变：Host 由 fetch 按目标 URL 重设；redirect: "manual" 让后端的 302（/auth/handoff）原样交给浏览器，
+ * Set-Cookie 不丢；WebSocket 101 原样返回；指向 run.app 的 Location 改写成当前域名。
  *
- * 职责只有四件：
- *  1. 把请求原样转给 Cloud Run（Host 必须改成 run.app 域名，Cloud Run 靠它路由）。
- *  2. 告诉后端浏览器实际访问的域名（X-Forwarded-Host），并用共享密钥 X-Proxy-Auth 证明"这是 Worker 说的"。
- *     客户端直连 run.app 时也能伪造 X-Forwarded-Host，后端只在密钥正确时信任它（见 backend/app/auth.py public_host）。
- *  3. Cookie / Set-Cookie 原样透传：后端下发的是 host-only cookie，浏览器会按 lectrace.app 保存。
- *  4. WebSocket（/ws/*）升级请求原样透传；/api、/ws、/auth 一律不缓存。
- *
- * 环境变量（wrangler.toml / dashboard）：
- *   ORIGIN_HOST         Cloud Run 域名，例如 lectrace-jngknpqwya-an.a.run.app
- *   PROXY_SHARED_SECRET 与后端 PROXY_SHARED_SECRET 相同（用 wrangler secret put 设置，不要写进 toml）
+ * 密钥：wrangler secret put PROXY_SHARED_SECRET（值与后端 .env 的 PROXY_SHARED_SECRET 相同），
+ * 或在 Dashboard → Settings → Variables 里加一个加密变量。没设时 Worker 不发该头，后端退回按 Host 判断。
  */
+const ORIGIN = "https://lectrace-jngknpqwya-an.a.run.app";
+
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url);
-    const publicHost = url.host;
-    url.host = env.ORIGIN_HOST;
-    url.protocol = "https:";
+    const incoming = new URL(request.url);
+    const target = new URL(incoming.pathname + incoming.search, ORIGIN);
 
+    // 保留 HTTP 方法、请求体和 WebSocket Upgrade 等请求信息
     const headers = new Headers(request.headers);
-    headers.set("Host", env.ORIGIN_HOST);
-    headers.set("X-Forwarded-Host", publicHost);
+    headers.delete("host");
+    headers.set("X-Forwarded-Host", incoming.host);
     headers.set("X-Forwarded-Proto", "https");
-    // 客户端带来的同名头一律覆盖，防止伪造
-    if (env.PROXY_SHARED_SECRET) headers.set("X-Proxy-Auth", env.PROXY_SHARED_SECRET);
+    if (env && env.PROXY_SHARED_SECRET) headers.set("X-Proxy-Auth", env.PROXY_SHARED_SECRET);
     else headers.delete("X-Proxy-Auth");
 
-    const isDynamic = /^\/(api|ws|auth)(\/|$)/.test(url.pathname);
-    const init = {
+    const upstreamRequest = new Request(target.toString(), {
       method: request.method,
       headers,
-      body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
-      redirect: "manual", // 后端的 302（/auth/handoff）要原样交给浏览器，不能在 Worker 里跟进
-      cf: isDynamic ? { cacheTtl: 0, cacheEverything: false } : undefined,
-    };
-    const resp = await fetch(url.toString(), init);
+      body: request.method === "GET" || request.method === "HEAD"
+        ? undefined
+        : request.body,
+      redirect: "manual",
+    });
 
-    // WebSocket：fetch 返回 101 + webSocket 时必须原样返回，不能改 headers
-    if (resp.status === 101) return resp;
+    const response = await fetch(upstreamRequest);
 
-    const out = new Response(resp.body, resp);
-    if (isDynamic) out.headers.set("Cache-Control", "no-store");
-    return out;
+    // WebSocket 握手由 Cloudflare 直接透传
+    if (response.webSocket) {
+      return response;
+    }
+
+    const responseHeaders = new Headers(response.headers);
+
+    // 将指向原 Cloud Run 地址的 HTTP 重定向改为当前域名
+    const location = responseHeaders.get("location");
+    if (location) {
+      const redirectURL = new URL(location, ORIGIN);
+
+      if (redirectURL.origin === ORIGIN) {
+        redirectURL.protocol = incoming.protocol;
+        redirectURL.host = incoming.host;
+        responseHeaders.set("location", redirectURL.toString());
+      }
+    }
+
+    // 动态接口不缓存（登录态、迁移票据）
+    if (/^\/(api|ws|auth)(\/|$)/.test(incoming.pathname)) {
+      responseHeaders.set("Cache-Control", "no-store");
+    }
+
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: responseHeaders,
+    });
   },
 };

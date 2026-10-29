@@ -68,6 +68,8 @@ def auth_config(request: Request, settings: Settings = Depends(get_settings)) ->
         # 功能关闭时 primary_origin 为空、is_legacy 为 False，前端什么都不做
         "primary_origin": f"https://{settings.primary_host}" if settings.handoff_enabled else "",
         "is_legacy": is_legacy_host(host, settings),
+        # 后端认定的公开域名（经 Worker 且密钥正确时是 X-Forwarded-Host，否则是 Host）。排查 Worker 配置用
+        "host": host,
     }
 
 
