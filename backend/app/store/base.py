@@ -104,6 +104,14 @@ class Store(Protocol):
         """某用户最近若干条用量明细，按 ts 降序。"""
         ...
 
+    async def mark_logout(self, user_id: str, ts: float) -> None:
+        """记下最近一次登出时间（任一域名）。域名迁移只给登出之后签发的 cookie 发票据。"""
+        ...
+
+    async def logged_out_at(self, user_id: str) -> float:
+        """最近一次登出时间；没有返回 0。"""
+        ...
+
     # ---- 域名迁移票据（见 auth.py）----
     async def create_handoff(self, ticket_hash: str, data: dict, expires_at: float) -> None:
         """存一张票据（key 是票据的 sha256）。data 里是用户信息 + 目标 host。"""

@@ -149,6 +149,13 @@ class MemoryStore:
         evs = sorted(self._events.get(user_id, []), key=lambda e: e.get("ts", 0), reverse=True)
         return [dict(e) for e in evs[:limit]]
 
+    async def mark_logout(self, user_id: str, ts: float) -> None:
+        u = self._users.setdefault(user_id, {"id": user_id, "login_count": 0, "usage": {}})
+        u["logged_out_at"] = ts
+
+    async def logged_out_at(self, user_id: str) -> float:
+        return float(self._users.get(user_id, {}).get("logged_out_at", 0) or 0)
+
     # ---- 域名迁移票据 ----
     async def create_handoff(self, ticket_hash: str, data: dict, expires_at: float) -> None:
         # 顺手清掉过期的，免得内存版越积越多

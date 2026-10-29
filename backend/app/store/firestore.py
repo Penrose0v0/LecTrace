@@ -240,6 +240,13 @@ class FirestoreStore:
         )
         return [snap.to_dict() or {} async for snap in q.stream()]
 
+    async def mark_logout(self, user_id: str, ts: float) -> None:
+        await self._user(user_id).set({"logged_out_at": ts}, merge=True)
+
+    async def logged_out_at(self, user_id: str) -> float:
+        snap = await self._user(user_id).get()
+        return float((snap.to_dict() or {}).get("logged_out_at", 0) or 0) if snap.exists else 0.0
+
     # ---- 域名迁移票据 ----
     def _handoff(self, ticket_hash: str):
         return self._db.collection("handoff_tickets").document(ticket_hash)

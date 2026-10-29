@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
 from ..auth import (
+    COOKIE_NAME,
     DEV_USER,
     clear_session_cookie,
     current_user,
@@ -28,6 +29,7 @@ from ..auth import (
     optional_user,
     public_host,
     safe_next,
+    session_issued_at,
     set_session_cookie,
     verify_google_credential,
 )
@@ -82,9 +84,15 @@ async def auth_handoff_create(
     host = public_host(request, settings)
     if not is_legacy_host(host, settings):
         raise HTTPException(status_code=404)
+    # 用户在任一域名登出过之后，旧域名上登出前签发的 cookie 不能再换票据：
+    # 否则新域名登出 → 打开旧链接 → 又被自动登录。403 让前端不带票据跳过去，正常看登录页
+    store = get_store()
+    if session_issued_at(request.cookies.get(COOKIE_NAME)) < await store.logged_out_at(user.id):
+        log.info("handoff refused for %s: cookie predates logout", user.id)
+        raise HTTPException(status_code=403, detail={"code": "logged_out"})
     token, ticket_hash = new_handoff_ticket()
     now = time.time()
-    await get_store().create_handoff(
+    await store.create_handoff(
         ticket_hash,
         {"user": user.model_dump(), "target": settings.primary_host, "from": host, "created_at": now},
         expires_at=now + settings.handoff_ttl_sec,
@@ -142,8 +150,14 @@ async def auth_dev(
 
 
 @router.post("/auth/logout")
-def auth_logout(response: Response) -> dict:
+async def auth_logout(response: Response, user: User | None = Depends(optional_user)) -> dict:
     clear_session_cookie(response)
+    if user is not None:
+        # 记下登出时间：另一个域名上更早签发的 cookie 从此不能再换迁移票据（见 auth_handoff_create）
+        try:
+            await get_store().mark_logout(user.id, time.time())
+        except Exception:  # noqa: BLE001 - 记不上也要让用户登出
+            log.exception("mark_logout failed")
     return {"ok": True}
 
 

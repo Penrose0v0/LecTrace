@@ -58,7 +58,9 @@ def _b64d(s: str) -> bytes:
 
 
 def sign_session(user: User, settings: Settings) -> str:
-    payload = {**user.model_dump(), "exp": int(time.time()) + settings.session_days * 86400}
+    now = int(time.time())
+    # iat：签发时间。域名迁移时拿它和用户最近一次登出时间比，登出之后签发的 cookie 才能换票据
+    payload = {**user.model_dump(), "iat": now, "exp": now + settings.session_days * 86400}
     body = _b64e(json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
     sig = hmac.new(_secret(settings), body.encode("ascii"), hashlib.sha256).digest()
     return f"{body}.{_b64e(sig)}"
@@ -78,6 +80,17 @@ def verify_session(token: str | None, settings: Settings) -> User | None:
     if payload.get("exp", 0) < time.time():
         return None
     return User(**{k: payload.get(k, "") for k in User.model_fields})
+
+
+def session_issued_at(token: str | None) -> float:
+    """cookie 的签发时间（iat）；老 cookie 没有这个字段按 0 算。只在签名已经验过之后调用。"""
+    if not token or "." not in token:
+        return 0.0
+    try:
+        payload = json.loads(_b64d(token.rsplit(".", 1)[0]))
+        return float(payload.get("iat", 0) or 0)
+    except Exception:  # noqa: BLE001
+        return 0.0
 
 
 def set_session_cookie(resp: Response, request: Request, user: User, settings: Settings) -> None:

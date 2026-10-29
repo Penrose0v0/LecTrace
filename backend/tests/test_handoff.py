@@ -121,12 +121,22 @@ async def test_happy_path():
         r = await c.get(path, headers=via_worker(NEW))
         assert r.status_code == 302 and r.headers["location"] == "/?handoff=expired"
         assert COOKIE_NAME not in r.headers.get("set-cookie", "")
-        # 新域名登出不影响旧域名
+        # 新域名登出：旧域名 cookie 在旧域名上仍可用（不打断那边的 API / WS）……
+        await asyncio.sleep(0.01)  # 让登出时间严格晚于旧 cookie 的 iat
         r = await c.post("/api/auth/logout", headers=via_worker(NEW), cookies={COOKIE_NAME: new_cookie})
         assert 'lt_session=""' in r.headers["set-cookie"] or "Max-Age=0" in r.headers["set-cookie"]
         me_old = (await c.get("/api/auth/me", headers=via_worker(OLD), cookies={COOKIE_NAME: old_cookie})).json()
         assert me_old["user"]["id"] == "dev:local"
-    print("ok happy path: migrate, uid preserved, one-time, independent logout")
+        # ……但登出前签发的旧 cookie 不能再换票据 → 403，前端会不带票据跳到新域名登录页，不会被自动登回
+        r = await c.post("/api/auth/handoff", json={"next": "/"}, headers=via_worker(OLD), cookies={COOKIE_NAME: old_cookie})
+        assert r.status_code == 403 and r.json()["detail"]["code"] == "logged_out", r.text
+        # 登出之后在旧域名重新登录（新签发的 cookie）→ 又可以迁移
+        await asyncio.sleep(1.05)  # iat 是整秒
+        fresh = (await c.post("/api/auth/dev", headers=via_worker(OLD))).cookies[COOKIE_NAME]
+        c.cookies.clear()
+        r = await c.post("/api/auth/handoff", json={"next": "/"}, headers=via_worker(OLD), cookies={COOKIE_NAME: fresh})
+        assert r.status_code == 200, r.text
+    print("ok happy path: migrate, uid preserved, one-time, logout blocks re-handoff, fresh login re-enables")
 
 
 async def test_rejections():

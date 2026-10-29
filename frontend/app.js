@@ -348,13 +348,17 @@ async function boot() {
     fetch("/api/auth/me").then((r) => r.json()).catch(() => ({ user: null })),
   ]);
   state.authConfig = cfg;
-  // 旧域名：迁到新域名。已登录的带一张一次性票据过去保持登录；未登录的直接过去看登录页
-  if (cfg.is_legacy && cfg.primary_origin) { await migrateToPrimary(cfg.primary_origin, !!me.user); return; }
+  // 旧域名：迁到新域名。已登录的带一张一次性票据过去保持登录；未登录的直接过去看登录页。
+  // 已经在新域名上就绝不跳（防止 Worker 没带转发头时后端误判成旧域名而无限跳转）
+  if (cfg.is_legacy && cfg.primary_origin && location.origin !== cfg.primary_origin) {
+    await migrateToPrimary(cfg.primary_origin, !!me.user);
+    return;
+  }
   if (me.user) enterApp(me.user, me.prefs, me.quota, me.prefs_saved);
   else showLogin();
 }
 
-// 旧域名 → 新域名。票据申请失败（网络、后端关了开关）就不带票据过去，顶多重新登录一次
+// 旧域名 → 新域名。票据申请失败（网络、后端关了开关、用户在新域名登出过 → 403）就不带票据过去，顶多重新登录一次
 async function migrateToPrimary(primaryOrigin, loggedIn) {
   const here = location.pathname + location.search;  // hash 在 URL 末尾原样保留，302 后浏览器会带上
   let url = primaryOrigin + here;
