@@ -47,7 +47,7 @@ async def ws_transcribe(ws: WebSocket) -> None:
     cap = quota.lecture_cap_sec(user, settings)
     if cap is not None and info.latest_t >= cap:
         await _send(ws, _limit_msg(cap))
-        await _send(ws, {"type": "end"})
+        await _end(ws)
         return
     try:
         if info.source == "replay":
@@ -59,7 +59,7 @@ async def ws_transcribe(ws: WebSocket) -> None:
     except Exception as exc:  # noqa: BLE001 - 兜底反馈给前端
         log.exception("transcribe failed")
         await _send(ws, {"type": "error", "message": str(exc)})
-    await _send(ws, {"type": "end"})
+    await _end(ws)
 
 
 def _limit_msg(cap_sec: float) -> dict:
@@ -70,6 +70,16 @@ async def _send(ws: WebSocket, data: dict) -> None:
     try:
         await ws.send_json(data)
     except Exception:  # 对端已关
+        pass
+
+
+async def _end(ws: WebSocket) -> None:
+    """发 end 并主动发关闭帧。不显式 close 的话由服务器直接断 TCP，经 Cloud Run / Cloudflare 代理时
+    最后一两帧（end、甚至 error）可能来不及送达，客户端只看到 abnormal closure。"""
+    await _send(ws, {"type": "end"})
+    try:
+        await ws.close(code=1000)
+    except Exception:  # noqa: BLE001 - 对端已关
         pass
 
 
