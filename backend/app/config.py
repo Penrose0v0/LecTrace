@@ -99,6 +99,23 @@ class Settings:
         e.strip().lower() for e in os.getenv("ALLOWED_EMAILS", "").split(",") if e.strip()
     )
 
+    # ---- 域名迁移：旧域名 → 新域名的无感登录（见 auth.py / routes/auth.py 的 handoff）----
+    # 新域名（不带协议）。留空 = 功能关闭：不跳转、handoff 接口 404，随时可回滚
+    primary_host: str = os.getenv("PRIMARY_HOST", "").strip().lower()
+    # 旧域名列表（逗号分隔）。只有这些 host 上的页面会把已登录用户迁到 PRIMARY_HOST
+    legacy_hosts: frozenset[str] = frozenset(
+        h.strip().lower() for h in os.getenv("LEGACY_HOSTS", "").split(",") if h.strip()
+    )
+    # Cloudflare Worker 与后端的共享密钥：Worker 在 X-Proxy-Auth 头里带上，后端才信任 X-Forwarded-Host。
+    # 不配则一律按 Host 头判断（直连 Cloud Run 时就是 run.app 域名）
+    proxy_shared_secret: str = os.getenv("PROXY_SHARED_SECRET", "")
+    # 迁移票据有效期（秒），一次性
+    handoff_ttl_sec: int = int(os.getenv("HANDOFF_TTL_SEC", "60"))
+
+    @property
+    def handoff_enabled(self) -> bool:
+        return bool(self.primary_host)
+
     # ---- 配额（管理员不受限；本地开发用户视为管理员）----
     admin_emails: frozenset[str] = frozenset(
         e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()

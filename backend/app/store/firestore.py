@@ -11,6 +11,8 @@
     │                   login_count）+ usage: {累计用量，见 usage.py}
     ├─ days/{YYYY-MM-DD}  当日用量（同一组字段）
     └─ events/{id}        用量明细 {ts, kind, ...}
+  handoff_tickets/{sha256}  域名迁移票据 {data, expires_at, used, ttl}
+    ttl 是 Timestamp，供 Firestore TTL 策略自动清理（控制台对该集合启用 TTL、字段选 ttl）
 
 用 AsyncClient，全程 await。设置 FIRESTORE_EMULATOR_HOST 即连模拟器。
 按 user_id / session_id 的列表查询都只过滤、在内存里排序，避免 Firestore 组合索引。
@@ -20,6 +22,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from datetime import datetime, timezone
 
 from google.cloud import firestore
 
@@ -236,3 +239,31 @@ class FirestoreStore:
             .limit(limit)
         )
         return [snap.to_dict() or {} async for snap in q.stream()]
+
+    # ---- 域名迁移票据 ----
+    def _handoff(self, ticket_hash: str):
+        return self._db.collection("handoff_tickets").document(ticket_hash)
+
+    async def create_handoff(self, ticket_hash: str, data: dict, expires_at: float) -> None:
+        await self._handoff(ticket_hash).set({
+            "data": data, "expires_at": expires_at, "used": False, "created_at": time.time(),
+            # TTL 策略用：过期后再留 1 天给排查，之后自动删
+            "ttl": datetime.fromtimestamp(expires_at + 86400, tz=timezone.utc),
+        })
+
+    async def redeem_handoff(self, ticket_hash: str, now: float) -> dict | None:
+        ref = self._handoff(ticket_hash)
+
+        @firestore.async_transactional
+        async def _redeem(tx) -> dict | None:
+            snap = await ref.get(transaction=tx)
+            if not snap.exists:
+                return None
+            d = snap.to_dict() or {}
+            if d.get("used") or float(d.get("expires_at", 0)) < now:
+                return None
+            tx.update(ref, {"used": True, "used_at": now})
+            return dict(d.get("data") or {})
+
+        # 事务保证并发兑换只有一个成功：第二个事务读到 used=True 返回 None，或因冲突重试后同样 None
+        return await _redeem(self._db.transaction())

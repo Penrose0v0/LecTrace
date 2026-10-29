@@ -1,0 +1,13 @@
+# Cloudflare Worker：lectrace.app → Cloud Run 代理。部署：cd infra/cloudflare && npx wrangler deploy
+# 共享密钥不要写在这里：npx wrangler secret put PROXY_SHARED_SECRET（值与后端 .env 的 PROXY_SHARED_SECRET 相同）
+name = "lectrace-proxy"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+
+routes = [
+  { pattern = "lectrace.app/*", zone_name = "lectrace.app" },
+  { pattern = "www.lectrace.app/*", zone_name = "lectrace.app" },
+]
+
+[vars]
+ORIGIN_HOST = "lectrace-jngknpqwya-an.a.run.app"

@@ -10,6 +10,7 @@ const I18N = {
     devLogin: "ローカル開発として続行", loginHint: "Google アカウントでサインインすると、過去の講義を見返したり再開できます。",
     loginHintDev: "GOOGLE_CLIENT_ID が未設定のため、ローカル開発用ログインを使っています。",
     loginFailed: "ログインに失敗しました：",
+    handoffExpired: "新しいアドレスに移動しました。もう一度 Google でログインしてください（履歴はそのまま残っています）。",
     navNew: "新しい講義", navHistory: "履歴", navProfile: "プロフィール", navSettings: "設定", logout: "サインアウト",
     adminLink: "利用状況ダッシュボード",
     untitled: "無題の講義", lectureInfo: "講義情報",
@@ -57,6 +58,7 @@ const I18N = {
     devLogin: "以本地开发身份继续", loginHint: "用 Google 账号登录后，可以回看过去的课堂或继续转录。",
     loginHintDev: "未配置 GOOGLE_CLIENT_ID，当前使用本地开发登录。",
     loginFailed: "登录失败：",
+    handoffExpired: "LecTrace 换了新地址。请再用 Google 登录一次，账号和历史记录都还在。",
     navNew: "新课堂", navHistory: "历史", navProfile: "我的", navSettings: "设置", logout: "退出登录",
     adminLink: "用量后台",
     untitled: "未命名课堂", lectureInfo: "课堂信息",
@@ -104,6 +106,7 @@ const I18N = {
     devLogin: "Continue as local dev", loginHint: "Sign in with Google to revisit past lectures or resume one.",
     loginHintDev: "GOOGLE_CLIENT_ID is not configured — using the local dev login.",
     loginFailed: "Sign-in failed: ",
+    handoffExpired: "LecTrace moved to a new address. Please sign in with Google once more; your account and history are intact.",
     navNew: "New lecture", navHistory: "History", navProfile: "Profile", navSettings: "Settings", logout: "Sign out",
     adminLink: "Usage dashboard",
     untitled: "Untitled lecture", lectureInfo: "Lecture info",
@@ -345,8 +348,23 @@ async function boot() {
     fetch("/api/auth/me").then((r) => r.json()).catch(() => ({ user: null })),
   ]);
   state.authConfig = cfg;
+  // 旧域名：迁到新域名。已登录的带一张一次性票据过去保持登录；未登录的直接过去看登录页
+  if (cfg.is_legacy && cfg.primary_origin) { await migrateToPrimary(cfg.primary_origin, !!me.user); return; }
   if (me.user) enterApp(me.user, me.prefs, me.quota, me.prefs_saved);
   else showLogin();
+}
+
+// 旧域名 → 新域名。票据申请失败（网络、后端关了开关）就不带票据过去，顶多重新登录一次
+async function migrateToPrimary(primaryOrigin, loggedIn) {
+  const here = location.pathname + location.search;  // hash 在 URL 末尾原样保留，302 后浏览器会带上
+  let url = primaryOrigin + here;
+  if (loggedIn) {
+    try {
+      const r = await postJson("/api/auth/handoff", { next: here });
+      url = (await r.json()).url;
+    } catch (e) { console.warn("[handoff] ticket failed, continuing without login:", e.message); }
+  }
+  location.replace(url + location.hash);
 }
 
 function showLogin() {
@@ -357,6 +375,14 @@ function showLogin() {
   const cfg = state.authConfig;
   $("devLoginBtn").classList.toggle("hidden", !cfg.dev_login);
   $("loginHint").textContent = cfg.google_client_id ? t("loginHint") : cfg.dev_login ? t("loginHintDev") : "GOOGLE_CLIENT_ID is not configured.";
+  // 从旧域名带票据过来但票据失效（过期 / 已用）：说明一下，正常登录即可，账号和历史都在
+  const params = new URLSearchParams(location.search);
+  if (params.get("handoff") === "expired") {
+    $("loginHint").textContent = t("handoffExpired");
+    params.delete("handoff");
+    const qs = params.toString();
+    history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash);
+  }
   if (cfg.google_client_id) mountGoogleButton(cfg.google_client_id);
 }
 

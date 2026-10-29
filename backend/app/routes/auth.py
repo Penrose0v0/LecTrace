@@ -1,14 +1,33 @@
-"""登录 / 登出 / 当前用户 / 偏好。"""
+"""登录 / 登出 / 当前用户 / 偏好 / 域名迁移（handoff）。
+
+域名迁移流程（PRIMARY_HOST 配了才启用）：
+  旧域名页面（已登录） → POST /api/auth/handoff {next} → 返回新域名的 /auth/handoff?t=票据&next=…
+  浏览器跳过去 → GET /auth/handoff 事务兑换票据 → 给新域名下发同内容的 cookie → 302 到 next
+  失败（过期 / 用过 / host 不符）→ 302 /?handoff=expired，前端显示提示，用户正常走 Google 登录。
+旧域名的 cookie 不动：两边各自保持登录，各自登出。
+"""
 
 from __future__ import annotations
 
+import logging
+import time
+from urllib.parse import urlencode
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import JSONResponse, RedirectResponse
+from pydantic import BaseModel
 
 from ..auth import (
     DEV_USER,
     clear_session_cookie,
     current_user,
+    hash_handoff_ticket,
+    is_legacy_host,
+    is_primary_host,
+    new_handoff_ticket,
     optional_user,
+    public_host,
+    safe_next,
     set_session_cookie,
     verify_google_credential,
 )
@@ -17,7 +36,11 @@ from ..config import Settings, get_settings
 from ..deps import get_store, load_prefs
 from ..models import LANGS, GoogleLoginRequest, User, UserPrefs
 
+log = logging.getLogger("lectrace.auth")
 router = APIRouter(prefix="/api", tags=["auth"])
+# 顶层导航用的兑换路由（不在 /api 下）。main.py 里和其它路由一起在静态挂载之前注册
+handoff_router = APIRouter(tags=["auth"])
+_NO_STORE = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
 
 
 async def _login_payload(user: User, settings: Settings, *, login: bool) -> dict:
@@ -34,9 +57,68 @@ async def _login_payload(user: User, settings: Settings, *, login: bool) -> dict
 
 
 @router.get("/auth/config")
-def auth_config(settings: Settings = Depends(get_settings)) -> dict:
-    """前端据此决定渲染 Google 按钮还是本地开发登录。"""
-    return {"google_client_id": settings.google_client_id, "dev_login": settings.auth_dev_login}
+def auth_config(request: Request, settings: Settings = Depends(get_settings)) -> dict:
+    """前端据此决定渲染 Google 按钮还是本地开发登录；以及当前是否在旧域名上（要不要迁移）。"""
+    host = public_host(request, settings)
+    return {
+        "google_client_id": settings.google_client_id,
+        "dev_login": settings.auth_dev_login,
+        # 功能关闭时 primary_origin 为空、is_legacy 为 False，前端什么都不做
+        "primary_origin": f"https://{settings.primary_host}" if settings.handoff_enabled else "",
+        "is_legacy": is_legacy_host(host, settings),
+    }
+
+
+class HandoffRequest(BaseModel):
+    next: str = "/"
+
+
+@router.post("/auth/handoff")
+async def auth_handoff_create(
+    req: HandoffRequest, request: Request, user: User = Depends(current_user),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    """旧域名上已登录的用户申请迁移票据。只在旧域名有效；新域名或功能关闭时 404。"""
+    host = public_host(request, settings)
+    if not is_legacy_host(host, settings):
+        raise HTTPException(status_code=404)
+    token, ticket_hash = new_handoff_ticket()
+    now = time.time()
+    await get_store().create_handoff(
+        ticket_hash,
+        {"user": user.model_dump(), "target": settings.primary_host, "from": host, "created_at": now},
+        expires_at=now + settings.handoff_ttl_sec,
+    )
+    log.info("handoff created for %s from %s", user.id, host)
+    qs = urlencode({"t": token, "next": safe_next(req.next)})
+    return JSONResponse({"url": f"https://{settings.primary_host}/auth/handoff?{qs}"}, headers=_NO_STORE)
+
+
+@handoff_router.get("/auth/handoff")
+async def auth_handoff_redeem(
+    request: Request, t: str = "", next: str = "/", settings: Settings = Depends(get_settings)
+) -> Response:
+    """新域名上兑换票据：成功下发本域名 cookie 并跳到 next；失败跳登录页并带 handoff=expired。"""
+    host = public_host(request, settings)
+    if not is_primary_host(host, settings):
+        raise HTTPException(status_code=404)
+    target = safe_next(next)
+    failed = RedirectResponse("/?handoff=expired", status_code=302, headers=_NO_STORE)
+    if not t or len(t) > 128:
+        return failed
+    data = await get_store().redeem_handoff(hash_handoff_ticket(t), time.time())
+    if not data or data.get("target") != host:
+        log.info("handoff rejected on %s (%s)", host, "no ticket" if not data else "wrong target")
+        return failed
+    try:
+        user = User(**data["user"])
+    except Exception:  # noqa: BLE001 - 票据数据损坏也按失败处理
+        return failed
+    resp = RedirectResponse(target, status_code=302, headers=_NO_STORE)
+    set_session_cookie(resp, request, user, settings)
+    await usage.record_login(get_store(), user, settings, login=False)
+    log.info("handoff redeemed for %s on %s", user.id, host)
+    return resp
 
 
 @router.post("/auth/google")

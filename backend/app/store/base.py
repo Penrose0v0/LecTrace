@@ -103,3 +103,12 @@ class Store(Protocol):
     async def list_user_events(self, user_id: str, limit: int) -> list[dict]:
         """某用户最近若干条用量明细，按 ts 降序。"""
         ...
+
+    # ---- 域名迁移票据（见 auth.py）----
+    async def create_handoff(self, ticket_hash: str, data: dict, expires_at: float) -> None:
+        """存一张票据（key 是票据的 sha256）。data 里是用户信息 + 目标 host。"""
+        ...
+
+    async def redeem_handoff(self, ticket_hash: str, now: float) -> dict | None:
+        """原子兑换：存在、未过期、未用过才返回 data 并标记已用；否则 None。同一票据第二次必定 None。"""
+        ...

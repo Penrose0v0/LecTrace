@@ -18,6 +18,7 @@ class MemoryStore:
         self._users: dict[str, dict] = {}  # uid -> 资料 + usage
         self._days: dict[str, dict[str, dict]] = {}  # uid -> day -> usage
         self._events: dict[str, list[dict]] = {}
+        self._handoffs: dict[str, dict] = {}  # ticket_hash -> {data, expires_at, used}
 
     # ---- 会话 ----
     async def create_session(self, session_id: str, meta: dict) -> None:
@@ -147,3 +148,18 @@ class MemoryStore:
     async def list_user_events(self, user_id: str, limit: int) -> list[dict]:
         evs = sorted(self._events.get(user_id, []), key=lambda e: e.get("ts", 0), reverse=True)
         return [dict(e) for e in evs[:limit]]
+
+    # ---- 域名迁移票据 ----
+    async def create_handoff(self, ticket_hash: str, data: dict, expires_at: float) -> None:
+        # 顺手清掉过期的，免得内存版越积越多
+        now = time.time()
+        for h in [h for h, t in self._handoffs.items() if t["expires_at"] < now]:
+            del self._handoffs[h]
+        self._handoffs[ticket_hash] = {"data": dict(data), "expires_at": expires_at, "used": False}
+
+    async def redeem_handoff(self, ticket_hash: str, now: float) -> dict | None:
+        t = self._handoffs.get(ticket_hash)
+        if t is None or t["used"] or t["expires_at"] < now:
+            return None
+        t["used"] = True  # 单线程事件循环内无 await，天然原子
+        return dict(t["data"])

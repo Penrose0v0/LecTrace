@@ -28,6 +28,7 @@ FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
 
 app = FastAPI(title="LecTrace")
 app.include_router(auth.router)
+app.include_router(auth.handoff_router)  # GET /auth/handoff（域名迁移兑换，顶层导航）
 app.include_router(lectures.router)
 app.include_router(ai.router)
 app.include_router(transcribe.router)

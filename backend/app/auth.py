@@ -6,6 +6,11 @@
 
 本地开发（未配置 GOOGLE_CLIENT_ID 且不在 Cloud Run）允许 /api/auth/dev 直接登录为
 一个固定的本地用户，方便不配 OAuth 也能跑通全流程。
+
+域名迁移（handoff）：cookie 是 host-only 的，旧域名的登录态带不到新域名。旧域名页面向后端要一张
+一次性、短期（HANDOFF_TTL_SEC）的迁移票据，跳到新域名的 /auth/handoff 兑换，新域名据此签发自己的
+cookie（内容相同，uid 不变）。URL 里只有票据的随机 id，不含 session cookie 或 Google token；
+存储里只放票据的 sha256，泄漏也无法兑换。
 """
 
 from __future__ import annotations
@@ -15,6 +20,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import time
 
@@ -25,6 +31,8 @@ from .models import User
 
 COOKIE_NAME = "lt_session"
 DEV_USER = User(id="dev:local", email="dev@localhost", name="Local Dev")
+PROXY_AUTH_HEADER = "x-proxy-auth"
+FORWARDED_HOST_HEADER = "x-forwarded-host"
 
 
 # ---------------- cookie 签名 ----------------
@@ -111,6 +119,51 @@ async def verify_google_credential(credential: str, settings: Settings) -> User:
         name=info.get("name") or email,
         picture=info.get("picture", ""),
     )
+
+
+# ---------------- 公开域名 / 域名迁移票据 ----------------
+def public_host(req: Request | WebSocket, settings: Settings) -> str:
+    """浏览器实际访问的域名（小写，含端口）。
+
+    经 Cloudflare Worker 代理时 Host 已被改成 run.app，真实域名在 X-Forwarded-Host 里；
+    但这个头客户端直连时也能伪造，所以只有 X-Proxy-Auth 等于共享密钥时才信它，否则按 Host。
+    """
+    headers = req.headers
+    if settings.proxy_shared_secret:
+        given = headers.get(PROXY_AUTH_HEADER, "")
+        if given and hmac.compare_digest(given, settings.proxy_shared_secret):
+            fwd = headers.get(FORWARDED_HOST_HEADER, "")
+            if fwd:
+                return fwd.split(",")[0].strip().lower()
+    return (headers.get("host") or "").strip().lower()
+
+
+def is_primary_host(host: str, settings: Settings) -> bool:
+    return settings.handoff_enabled and host == settings.primary_host
+
+
+def is_legacy_host(host: str, settings: Settings) -> bool:
+    return settings.handoff_enabled and host in settings.legacy_hosts
+
+
+def new_handoff_ticket() -> tuple[str, str]:
+    """返回 (给浏览器的票据, 存库用的 sha256)。32 字节随机，URL 安全。"""
+    token = secrets.token_urlsafe(32)
+    return token, hash_handoff_ticket(token)
+
+
+def hash_handoff_ticket(token: str) -> str:
+    return hashlib.sha256(token.encode("ascii", "ignore")).hexdigest()
+
+
+_NEXT_OK = re.compile(r"^/(?![/\\])[\x21-\x7e]*$")  # 单个 / 开头，非 // 或 /\，只允许可打印 ASCII
+
+
+def safe_next(value: str | None, default: str = "/") -> str:
+    """兑换后跳转的路径：只接受站内相对路径，防开放重定向（//evil.com、/\\evil.com、带协议、含控制字符都拒绝）。"""
+    if not value or len(value) > 2048 or not _NEXT_OK.match(value):
+        return default
+    return value
 
 
 # ---------------- FastAPI 依赖 ----------------

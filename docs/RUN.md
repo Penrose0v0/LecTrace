@@ -105,6 +105,28 @@ v2 的 recognizer 用隐式 `projects/{GCP_PROJECT}/locations/{区域}/recognize
 `COST_CURRENCY`。后台按**当前**单价重算历史 token / 秒数，所以补填或调价后旧数据也立刻对。LLM 单价默认 0，换模型后记得改；
 真实账单以 GCP / SiliconFlow 控制台为准，这里只能分到人头做参考。
 
+## 一·四、换域名：旧域名 → 新域名无感登录
+
+cookie 是 host-only 的，换域名后旧域名的登录态带不过去。`PRIMARY_HOST` 配了之后：
+
+1. 旧域名（`LEGACY_HOSTS` 里的）页面加载时，前端看到 `/api/auth/config` 返回 `is_legacy=true`：
+   已登录 → `POST /api/auth/handoff` 拿一张票据，跳到 `https://新域名/auth/handoff?t=票据&next=原路径`；
+   未登录 → 直接跳到新域名同路径，看到登录页。旧域名的 cookie **不动**，两边各自保持登录、各自登出。
+2. 新域名 `GET /auth/handoff` 在 Firestore 事务里兑换票据（存在、未过期、未用过、目标 host 一致），
+   下发新域名的 cookie（内容相同，uid 不变，历史全在），302 到 `next`。失败则 302 到 `/?handoff=expired`，
+   登录页提示一句，用户正常点 Google 登录即可。
+3. 票据：32 字节随机、`HANDOFF_TTL_SEC`（默认 60 秒）、一次性；库里只存 sha256（`handoff_tickets/{sha256}`）。
+   URL 里不出现 session cookie 或 Google token。`next` 只接受站内相对路径（拒绝 `//`、`/\`、带协议、控制字符）。
+4. 后端怎么知道浏览器访问的是哪个域名：Cloudflare Worker（`infra/cloudflare/worker.js`）改写 Host 的同时带上
+   `X-Forwarded-Host` 和 `X-Proxy-Auth`，后端只在 `X-Proxy-Auth` 等于 `PROXY_SHARED_SECRET` 时信任转发头，
+   否则按 Host 判断。直连 run.app 伪造转发头没有用。
+
+**上线顺序**：① GCP OAuth 客户端的 Authorized JavaScript origins 加上新域名 → ② 后端部署，`PRIMARY_HOST`
+留空（接口 404、不跳转）→ ③ 部署 Worker 并设 `PROXY_SHARED_SECRET`，在新域名直接 Google 登录、转录一节课
+验证 WS 走 Worker 正常 → ④ Firestore 控制台给 `handoff_tickets` 开 TTL 策略（字段 `ttl`）→ ⑤ `.env` 填
+`PRIMARY_HOST` / `LEGACY_HOSTS` / `PROXY_SHARED_SECRET`，`scripts/deploy.sh`。
+**回滚**：`PRIMARY_HOST` 清空重新部署即可，旧域名照常，两边已有的 cookie 都不受影响，数据无需回滚。
+
 ## 一·五、启用 Firestore 持久化（可选）
 
 默认 `STORE_BACKEND=memory`，重启即丢。切到 Firestore 后，**Catchup 卡片 / AI 对话 / 转录段落**都会持久化，重启或多实例都不丢。
